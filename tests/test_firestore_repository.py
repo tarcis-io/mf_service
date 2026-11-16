@@ -232,6 +232,22 @@ def test_rename_scoped_to_owner(repo: FirestoreBatchRepository):
         repo.rename("u2", created.id, "hijack")
 
 
+def test_update_status_sets_status_and_error(repo: FirestoreBatchRepository):
+    created = repo.create(Batch(user_id="u1", name="b"))
+    repo.update_status(created.id, BatchStatus.ERROR, error_message="boom")
+    stored = repo.get("u1", created.id)
+    assert stored.status is BatchStatus.ERROR
+    assert stored.error_message == "boom"
+    # Non-error status clears the message.
+    repo.update_status(created.id, BatchStatus.CREATED, error_message="x")
+    assert repo.get("u1", created.id).error_message is None
+
+
+def test_update_status_missing_raises(repo: FirestoreBatchRepository):
+    with pytest.raises(BatchNotFoundError):
+        repo.update_status("missing", BatchStatus.CREATED)
+
+
 def test_delete(repo: FirestoreBatchRepository):
     created = repo.create(Batch(user_id="u1", name="temp"))
     repo.delete("u1", created.id)

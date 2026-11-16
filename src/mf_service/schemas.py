@@ -10,9 +10,10 @@ wire format has one definition.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
+from fastapi import Form
+from pydantic import BaseModel, Field, StringConstraints
 
 from mf_service.domain import Batch, BatchStatus
 
@@ -69,14 +70,19 @@ def _batch_name_field() -> Any:
     )
 
 
-class BatchCreateRequest(BaseModel):
-    """Body of ``POST /batches``. ``user_id`` comes from the X-User-Id header,
-    and ``status`` always starts as ``created`` — so only the name is supplied.
-    """
-
-    model_config = {"str_strip_whitespace": True}
-
-    name: str = _batch_name_field()
+# Batch-name type for the multipart create endpoint. ``POST /batches`` is
+# multipart (it also carries the input files), so ``name`` is a Form field
+# rather than a JSON body. StringConstraints strips whitespace first — so an
+# all-blank name trims to empty and fails min_length — then enforces the same
+# 1–255-char bound as the JSON models; Form carries the OpenAPI docs.
+BatchNameForm = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+    Form(
+        description="Human-readable batch name; unique per user.",
+        examples=["Spring run 2026"],
+    ),
+]
 
 
 class BatchUpdateRequest(BaseModel):
@@ -108,7 +114,7 @@ class BatchResponse(BaseModel):
     )
     status: BatchStatus = Field(
         description="Lifecycle status of the batch.",
-        examples=[BatchStatus.CREATED],
+        examples=[BatchStatus.CREATING],
     )
     error_message: str | None = Field(
         default=None,

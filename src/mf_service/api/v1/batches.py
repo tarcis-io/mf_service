@@ -13,16 +13,19 @@ the handlers registered below.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, status
+from typing import Annotated
+
+from fastapi import APIRouter, BackgroundTasks, Form, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 
-from mf_service.deps import BatchRepositoryDep, UserIdDep
+from mf_service.deps import BatchRepositoryDep, StorageGatewayDep, UserIdDep
 from mf_service.domain import Batch
 from mf_service.schemas import (
-    BatchCreateRequest,
+    BatchNameForm,
     BatchResponse,
     BatchUpdateRequest,
 )
+from mf_service.uploads import REQUIRED_FILES, upload_batch_files
 
 router = APIRouter(prefix="/batches", tags=["batches"])
 
@@ -34,18 +37,50 @@ router = APIRouter(prefix="/batches", tags=["batches"])
     summary="Create a batch",
     responses={status.HTTP_409_CONFLICT: {"description": "Name already in use"}},
 )
-def create_batch(
-    body: BatchCreateRequest,
+async def create_batch(
     user_id: UserIdDep,
     repo: BatchRepositoryDep,
+    storage: StorageGatewayDep,
+    background_tasks: BackgroundTasks,
+    name: BatchNameForm,
+    mzmine_annotations: Annotated[UploadFile, Form()],
+    mzmine_full_feature_table: Annotated[UploadFile, Form()],
+    mzmine_metadata: Annotated[UploadFile, Form()],
+    gnps_feature_table_reformated: Annotated[UploadFile, Form()],
+    gnps_merged_results: Annotated[UploadFile, Form()],
 ) -> BatchResponse:
-    """Create a batch for the calling user.
+    """Create a batch for the calling user and upload its input files.
+
+    Accepts ``multipart/form-data``: a ``name`` field plus the five required
+    files (``mzmine_annotations.csv``, ``mzmine_full_feature_table.csv``,
+    ``mzmine_metadata.csv``, ``gnps_feature_table_reformated.csv``,
+    ``gnps_merged_results.tsv``). A missing field is a ``422``.
 
     The id, creation time, and initial ``created`` status are assigned by the
     server. Fails with ``409`` if the user already has a batch with this name.
+
+    The files are read here (while the request is open) and uploaded to object
+    storage by a background task that runs after the response; the batch's
+    status tracks that upload (``creating`` → ``created``, or ``error`` on
+    failure). The response therefore returns promptly with the newly created
+    batch (status ``creating``), before the upload completes.
     """
-    batch = Batch(user_id=user_id, name=body.name)
+    uploads = {
+        REQUIRED_FILES[0]: await mzmine_annotations.read(),
+        REQUIRED_FILES[1]: await mzmine_full_feature_table.read(),
+        REQUIRED_FILES[2]: await mzmine_metadata.read(),
+        REQUIRED_FILES[3]: await gnps_feature_table_reformated.read(),
+        REQUIRED_FILES[4]: await gnps_merged_results.read(),
+    }
+
+    batch = Batch(user_id=user_id, name=name)
     created = repo.create(batch)
+
+    # Upload after the response is sent. Bytes (not the now-closing UploadFiles)
+    # are captured above and handed to the task.
+    background_tasks.add_task(
+        upload_batch_files, repo, storage, created.id, uploads
+    )
     return BatchResponse.from_domain(created)
 
 

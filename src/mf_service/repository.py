@@ -22,7 +22,7 @@ from __future__ import annotations
 import threading
 from typing import Protocol, runtime_checkable
 
-from mf_service.domain import Batch
+from mf_service.domain import Batch, BatchStatus
 
 
 class BatchNotFoundError(Exception):
@@ -61,6 +61,24 @@ class BatchRepository(Protocol):
         Raises :class:`BatchNotFoundError` if it does not exist, or
         :class:`DuplicateBatchNameError` if the new name is already taken by
         another of the user's batches.
+        """
+
+    def update_status(
+        self,
+        batch_id: str,
+        status: BatchStatus,
+        *,
+        error_message: str | None = None,
+    ) -> Batch:
+        """Set a batch's ``status`` (and optional ``error_message``).
+
+        Unlike the other operations this is **not** scoped by ``user_id``: it is
+        called by server-side background work (the upload task, later the
+        engine) that already holds a batch id and acts on the owner's behalf,
+        not by a user request. Raises :class:`BatchNotFoundError` if the id does
+        not exist. ``error_message`` is written as given — pass it only when
+        moving to :attr:`~mf_service.domain.BatchStatus.ERROR`, and it is
+        cleared on any non-error status.
         """
 
     def delete(self, user_id: str, batch_id: str) -> None:
@@ -113,6 +131,26 @@ class InMemoryBatchRepository:
             if self._name_taken(user_id, name, exclude_id=batch_id):
                 raise DuplicateBatchNameError(name)
             batch.name = name
+            return batch
+
+    def update_status(
+        self,
+        batch_id: str,
+        status: BatchStatus,
+        *,
+        error_message: str | None = None,
+    ) -> Batch:
+        with self._lock:
+            batch = self._batches.get(batch_id)
+            if batch is None:
+                raise BatchNotFoundError(batch_id)
+            batch.status = status
+            # Keep error_message coupled to the error state: set it only with
+            # ERROR, clear it otherwise so a recovered batch carries no stale
+            # failure text.
+            batch.error_message = (
+                error_message if status is BatchStatus.ERROR else None
+            )
             return batch
 
     def delete(self, user_id: str, batch_id: str) -> None:

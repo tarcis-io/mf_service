@@ -6,8 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mf_service import create_app
-from mf_service.deps import get_batch_repository
+from mf_service.deps import get_batch_repository, get_storage_gateway
 from mf_service.repository import InMemoryBatchRepository
+from mf_service.storage import InMemoryStorageGateway
 
 
 @pytest.fixture
@@ -23,12 +24,25 @@ def batch_repo() -> InMemoryBatchRepository:
 
 
 @pytest.fixture
-def batch_client(batch_repo: InMemoryBatchRepository) -> TestClient:
-    """A TestClient whose batch routes use the in-memory repository.
+def storage_gateway() -> InMemoryStorageGateway:
+    """A fresh in-memory storage gateway, shared with ``batch_client``."""
+    return InMemoryStorageGateway()
 
-    Overriding get_batch_repository means the routes never touch Firestore, so
-    the full CRUD surface is exercised without any external dependency.
+
+@pytest.fixture
+def batch_client(
+    batch_repo: InMemoryBatchRepository,
+    storage_gateway: InMemoryStorageGateway,
+) -> TestClient:
+    """A TestClient whose batch routes use the in-memory repo and storage.
+
+    Overriding get_batch_repository and get_storage_gateway means the routes
+    never touch Firestore or a live bucket, so the full CRUD + upload surface is
+    exercised without any external dependency. Starlette's TestClient runs
+    background tasks before returning, so a create response already reflects the
+    completed upload.
     """
     app = create_app()
     app.dependency_overrides[get_batch_repository] = lambda: batch_repo
+    app.dependency_overrides[get_storage_gateway] = lambda: storage_gateway
     return TestClient(app)

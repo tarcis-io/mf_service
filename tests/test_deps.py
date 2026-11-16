@@ -11,11 +11,14 @@ from mf_engine.processors.gnps import GNPSProcessor
 from mf_service.config import Settings
 from mf_service.deps import (
     _get_firestore_client,
+    _get_storage_client,
     get_batch_repository,
     get_gnps_processor,
+    get_storage_gateway,
     get_user_id,
 )
 from mf_service.firestore_repository import FirestoreBatchRepository
+from mf_service.storage import GCSStorageGateway
 
 
 def test_provider_returns_gnps_processor():
@@ -82,3 +85,46 @@ def test_get_firestore_client_is_cached(_fake_firestore):
     second = _get_firestore_client("proj-x")
     assert first is second  # lru_cached per project
     assert _fake_firestore == ["proj-x"]  # built only once
+
+
+@pytest.fixture
+def _fake_storage(monkeypatch):
+    """Install a fake ``google.cloud.storage`` so no live client is built.
+
+    ``build_gcs_client`` does ``from google.cloud import storage`` and calls
+    ``storage.Client(...)``; stub that and record the project, clearing the
+    lru_cache so each test sees the fake.
+    """
+    calls: list[object] = []
+
+    class _Client:
+        def __init__(self, project=None):
+            calls.append(project)
+            self.project = project
+
+    fake = types.ModuleType("google.cloud.storage")
+    fake.Client = _Client
+    monkeypatch.setitem(sys.modules, "google.cloud.storage", fake)
+    _get_storage_client.cache_clear()
+    yield calls
+    _get_storage_client.cache_clear()
+
+
+def test_get_storage_gateway_builds_gcs_gateway(_fake_storage):
+    settings = Settings(firestore_project="proj-x", storage_bucket="bkt")
+    gateway = get_storage_gateway(settings)
+    assert isinstance(gateway, GCSStorageGateway)
+    assert _fake_storage == ["proj-x"]  # project forwarded to the client
+
+
+def test_get_storage_client_without_project(_fake_storage):
+    # No project configured -> client auto-detects (None branch of the builder).
+    _get_storage_client(None)
+    assert _fake_storage == [None]
+
+
+def test_get_storage_client_is_cached(_fake_storage):
+    first = _get_storage_client("proj-x")
+    second = _get_storage_client("proj-x")
+    assert first is second  # lru_cached per project
+    assert _fake_storage == ["proj-x"]  # built only once

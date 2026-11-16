@@ -29,9 +29,11 @@ classifiers = [
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "google-cloud-firestore>=2.16",
+    "google-cloud-storage>=2.16",
     "mf_engine @ git+https://github.com/tarcis-io/mf_engine.git@6fe8fd6e5b966dc65104dd0daf4f903b84632bbc",
 ]
 

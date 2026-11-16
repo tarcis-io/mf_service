@@ -101,18 +101,56 @@ service, which identifies the end user that way); a request without it gets
 user reads as `404`.
 
 A batch has a server-assigned `id` (UUID) and `created` timestamp, a `name`, a
-`status` (`created` → `processing` → `processed` / `error`), and an
-`error_message` (set only when `status` is `error`). New batches always start as
-`created`; the status advances later as the engine processes them, not through
-this API.
+`status`, and an `error_message` (set only when `status` is `error`). The status
+moves through two phases — first the file **upload** phase, then the engine
+**processing** phase:
 
-| Method & path        | Body        | Description                                   |
-| -------------------- | ----------- | --------------------------------------------- |
-| `POST /batches`      | `{ "name" }`| Create a batch. `409` if the name is taken.   |
-| `GET /batches`       | —           | List the caller's batches, newest first.      |
-| `GET /batches/{id}`  | —           | Fetch one batch. `404` if absent.             |
-| `PATCH /batches/{id}`| `{ "name" }`| Rename. `404` if absent, `409` on dup name.   |
-| `DELETE /batches/{id}`| —          | Delete. `404` if absent.                      |
+```
+creating → created → processing → processed
+       └───────┴──────────────┴──────────────→ error
+```
+
+A new batch is born `creating` — creation and the upload of its files are a
+single action — and becomes `created` once every file is in storage (see
+below). The `processing` → `processed` steps happen later, driven by the engine
+out-of-band, not through this API. `error` is the shared failure state for
+either phase.
+
+| Method & path         | Body                 | Description                                                    |
+| --------------------- | -------------------- | -------------------------------------------------------------- |
+| `POST /batches`       | multipart (see below)| Create a batch + upload its files. `409` if the name is taken. |
+| `GET /batches`        | —                    | List the caller's batches, newest first.                       |
+| `GET /batches/{id}`   | —                    | Fetch one batch. `404` if absent.                              |
+| `PATCH /batches/{id}` | `{ "name" }`         | Rename. `404` if absent, `409` on dup name.                    |
+| `DELETE /batches/{id}`| —                    | Delete. `404` if absent.                                       |
+
+**Creating a batch (file upload).** `POST /batches` is `multipart/form-data`: a
+`name` field plus five **required** files (a missing one is `422`):
+
+| Form field                      | Uploaded as                         |
+| ------------------------------- | ----------------------------------- |
+| `mzmine_annotations`            | `mzmine_annotations.csv`            |
+| `mzmine_full_feature_table`     | `mzmine_full_feature_table.csv`     |
+| `mzmine_metadata`               | `mzmine_metadata.csv`               |
+| `gnps_feature_table_reformated` | `gnps_feature_table_reformated.csv` |
+| `gnps_merged_results`           | `gnps_merged_results.tsv`           |
+
+The response returns promptly (status `creating`) with the new batch; the files
+are then uploaded to Cloud Storage by a **background task** under the key
+`<batch_id>/<filename>` in the configured bucket. The batch becomes `created`
+once all files are stored, or `error` (with `error_message`) if any upload
+fails. Poll `GET /batches/{id}` to observe it.
+
+```bash
+curl -X POST http://localhost:8000/batches \
+  -H "X-User-Id: user-123" \
+  -F "name=Spring run" \
+  -F "mzmine_annotations=@mzmine_annotations.csv" \
+  -F "mzmine_full_feature_table=@mzmine_full_feature_table.csv" \
+  -F "mzmine_metadata=@mzmine_metadata.csv" \
+  -F "gnps_feature_table_reformated=@gnps_feature_table_reformated.csv" \
+  -F "gnps_merged_results=@gnps_merged_results.tsv"
+```
 
 **Name uniqueness.** A name must be unique *per user* (two different users may
 use the same name). Only the name is mutable — all other fields are
@@ -122,13 +160,13 @@ concurrent creates of the same name cannot both succeed (see
 `mf_service.firestore_repository`).
 
 ```json
-// POST /batches  (header: X-User-Id: user-123)  body: { "name": "Spring run" }
+// 201 response to the POST /batches above
 {
   "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
   "user_id": "user-123",
   "name": "Spring run",
   "created": "2026-01-15T09:30:00Z",
-  "status": "created",
+  "status": "creating",
   "error_message": null
 }
 ```
@@ -149,15 +187,20 @@ directly. See `.env.example` for the available variables.
 | `MF_SERVICE_FIRESTORE_PROJECT`       | auto-detected   | GCP project for Firestore; blank = auto-detect.     |
 | `MF_SERVICE_BATCHES_COLLECTION`      | `batches`       | Firestore collection for batch documents.           |
 | `MF_SERVICE_BATCH_NAMES_COLLECTION`  | `batch_names`   | Firestore collection for the name-uniqueness guard. |
+| `MF_SERVICE_STORAGE_BUCKET`          | _(required)_    | Cloud Storage bucket for batch input files.         |
 
 The reported `version` is **not** configurable: it is always read from the
 package metadata so it reflects the build that is actually deployed. Setting
 `MF_SERVICE_VERSION` has no effect.
 
-Firestore uses Application Default Credentials: on Cloud Run the project and
-credentials are auto-detected, so `MF_SERVICE_FIRESTORE_PROJECT` is usually left
-unset. Locally, point `GOOGLE_APPLICATION_CREDENTIALS` at a service-account key
+Firestore and Cloud Storage both use Application Default Credentials: on Cloud
+Run the project and credentials are auto-detected, so
+`MF_SERVICE_FIRESTORE_PROJECT` is usually left unset (the storage client shares
+it). Locally, point `GOOGLE_APPLICATION_CREDENTIALS` at a service-account key
 (or run the Firestore emulator and set `FIRESTORE_EMULATOR_HOST`).
+`MF_SERVICE_STORAGE_BUCKET` has no default and must be set for uploads to
+succeed; the bucket must already exist and the service identity must have write
+access to it.
 
 ## Version
 
@@ -205,7 +248,9 @@ mf_service/
 │       ├── domain.py                # storage-agnostic Batch entity + status enum
 │       ├── repository.py            # BatchRepository contract + in-memory impl
 │       ├── firestore_repository.py  # Firestore-backed BatchRepository
-│       ├── deps.py                  # Depends seam (engine, repository, X-User-Id)
+│       ├── storage.py               # StorageGateway contract + GCS/in-memory impls
+│       ├── uploads.py               # required file set + background upload task
+│       ├── deps.py                  # Depends seam (engine, repository, storage, X-User-Id)
 │       ├── schemas.py               # request/response models (API contracts)
 │       ├── py.typed                 # PEP 561 typing marker
 │       └── api/
@@ -225,7 +270,9 @@ mf_service/
     ├── test_version.py              # /version endpoint
     ├── test_repository.py           # in-memory BatchRepository
     ├── test_firestore_repository.py # Firestore repo (fake client)
-    └── test_batches.py              # /batches CRUD endpoints
+    ├── test_storage.py              # StorageGateway (in-memory + GCS seam)
+    ├── test_uploads.py              # background upload task (status + paths)
+    └── test_batches.py              # /batches CRUD + multipart upload endpoint
 ```
 
 This uses the **src layout** so tests always run against the installed package,
@@ -235,8 +282,9 @@ disturbing the existing ones.
 
 ## Adding engine-backed endpoints
 
-The service is currently just the `/health` and `/version` identity endpoints;
-the next step is routes that call the engine. The seam for that is
+Beyond the `/health` and `/version` identity endpoints and the `/batches` CRUD
+(which uploads inputs to storage), the next step is routes that call the engine
+to process an uploaded batch. The seam for that is
 `mf_service.deps`: it exposes a `Depends` provider per engine processor (e.g.
 `get_gnps_processor` / the `GNPSProcessorDep` alias), so a route declares the
 processor it needs and the wiring — construction, lifetime, lazy import of

@@ -24,6 +24,7 @@ from fastapi import Depends, Header
 
 from mf_service.config import Settings, get_settings
 from mf_service.repository import BatchRepository
+from mf_service.storage import StorageGateway
 
 if TYPE_CHECKING:  # import for type checkers only; no engine import at runtime
     from mf_engine.processors.gnps import GNPSProcessor
@@ -98,3 +99,38 @@ def get_batch_repository(
 
 # Route alias: `repo: BatchRepositoryDep`.
 BatchRepositoryDep = Annotated[BatchRepository, Depends(get_batch_repository)]
+
+
+@lru_cache
+def _get_storage_client(project: str | None) -> Any:
+    """Build (once per process) the Cloud Storage client.
+
+    Lazily constructed via :func:`~mf_service.storage.build_gcs_client`, which
+    imports ``google-cloud-storage`` only when first called; ``project`` is the
+    cache key (``None`` lets the client auto-detect it from GCP credentials).
+    """
+    from mf_service.storage import build_gcs_client
+
+    return build_gcs_client(project)
+
+
+def get_storage_gateway(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> StorageGateway:
+    """Return the :class:`~mf_service.storage.StorageGateway`.
+
+    Builds the GCS-backed gateway from settings. Tests override this with
+    ``app.dependency_overrides[get_storage_gateway]`` to supply the in-memory
+    implementation, so no live bucket is needed to exercise the upload path.
+    """
+    from mf_service.storage import GCSStorageGateway
+
+    # Reuse the configured GCP project (shared with Firestore); blank/None lets
+    # the client auto-detect it from credentials, as on Cloud Run. Bucket names
+    # are globally unique, so this only scopes billing/permissions, not routing.
+    client = _get_storage_client(settings.firestore_project)
+    return GCSStorageGateway(client, bucket=settings.storage_bucket)
+
+
+# Route alias: `storage: StorageGatewayDep`.
+StorageGatewayDep = Annotated[StorageGateway, Depends(get_storage_gateway)]

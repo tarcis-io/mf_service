@@ -28,7 +28,7 @@ def test_create_and_get_roundtrip(repo: InMemoryBatchRepository):
     fetched = repo.get("u1", created.id)
     assert fetched.id == created.id
     assert fetched.name == "alpha"
-    assert fetched.status is BatchStatus.CREATED
+    assert fetched.status is BatchStatus.CREATING
     assert fetched.error_message is None
 
 
@@ -101,6 +101,28 @@ def test_rename_is_scoped_to_owner(repo: InMemoryBatchRepository):
     created = repo.create(Batch(user_id="u1", name="mine"))
     with pytest.raises(BatchNotFoundError):
         repo.rename("u2", created.id, "hijack")
+
+
+def test_update_status_sets_status(repo: InMemoryBatchRepository):
+    created = repo.create(Batch(user_id="u1", name="b"))
+    updated = repo.update_status(created.id, BatchStatus.CREATED)
+    assert updated.status is BatchStatus.CREATED
+    assert repo.get("u1", created.id).status is BatchStatus.CREATED
+
+
+def test_update_status_sets_and_clears_error_message(repo: InMemoryBatchRepository):
+    created = repo.create(Batch(user_id="u1", name="b"))
+    # Error status carries the message...
+    repo.update_status(created.id, BatchStatus.ERROR, error_message="boom")
+    assert repo.get("u1", created.id).error_message == "boom"
+    # ...and any non-error status clears it, even if a message is passed.
+    repo.update_status(created.id, BatchStatus.CREATED, error_message="ignored")
+    assert repo.get("u1", created.id).error_message is None
+
+
+def test_update_status_missing_raises(repo: InMemoryBatchRepository):
+    with pytest.raises(BatchNotFoundError):
+        repo.update_status("no-such-id", BatchStatus.CREATED)
 
 
 def test_delete_removes_batch(repo: InMemoryBatchRepository):

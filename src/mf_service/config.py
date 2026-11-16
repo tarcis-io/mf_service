@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     batches_collection: str = "batches"
     batch_names_collection: str = "batch_names"
 
+    # Cloud Storage bucket that batch input files are uploaded to (objects are
+    # keyed <batch_id>/<filename>). Required for the upload to succeed; left
+    # without a default so a misconfigured deployment fails loudly rather than
+    # writing to an unexpected bucket.
+    storage_bucket: str = ""
+
     @model_validator(mode="after")
     def _fill_identity_from_metadata(self) -> Settings:
         """Backfill empty identity fields from the package metadata.

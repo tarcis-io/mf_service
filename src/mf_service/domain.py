@@ -18,10 +18,25 @@ from enum import Enum
 class BatchStatus(str, Enum):
     """Lifecycle state of a batch.
 
-    A ``str`` enum so values serialise as plain strings ("created", ...) over
+    A ``str`` enum so values serialise as plain strings ("creating", ...) over
     HTTP and into Firestore, while staying type-safe in Python.
+
+    The lifecycle has two distinct phases. First the *upload* phase, where the
+    batch's input files are pushed to object storage::
+
+        creating -> created
+
+    then later the engine *processing* phase, driven out-of-band::
+
+        created -> processing -> processed
+
+    A batch is born ``creating`` (creation and the upload of its files are a
+    single action) and becomes ``created`` once every file is in storage.
+    ``error`` is the shared terminal failure state for either phase; when a
+    batch is in ``error`` its ``error_message`` carries the detail.
     """
 
+    CREATING = "creating"
     CREATED = "created"
     PROCESSING = "processing"
     PROCESSED = "processed"
@@ -42,16 +57,18 @@ def _now() -> datetime:
 class Batch:
     """A processing batch owned by a user.
 
-    ``id`` and ``created`` are assigned at construction so a freshly built
-    ``Batch`` is already complete. ``status`` starts at
-    :attr:`BatchStatus.CREATED`; it advances later as the engine processes the
-    batch and is not set through the CRUD API. ``error_message`` is populated
-    only when ``status`` is :attr:`BatchStatus.ERROR`.
+    ``id`` and ``created`` (the creation *timestamp*) are assigned at
+    construction so a freshly built ``Batch`` is already complete. ``status``
+    starts at :attr:`BatchStatus.CREATING` — the batch's files are uploaded
+    right after creation — and advances to :attr:`BatchStatus.CREATED` once they
+    are stored, then through the engine's processing states out-of-band (not via
+    the CRUD API). ``error_message`` is populated only when ``status`` is
+    :attr:`BatchStatus.ERROR`.
     """
 
     user_id: str
     name: str
     id: str = field(default_factory=_new_id)
     created: datetime = field(default_factory=_now)
-    status: BatchStatus = BatchStatus.CREATED
+    status: BatchStatus = BatchStatus.CREATING
     error_message: str | None = None

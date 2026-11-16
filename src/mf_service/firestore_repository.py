@@ -193,6 +193,33 @@ class FirestoreBatchRepository:
 
         return _rename(self._client.transaction())
 
+    def update_status(
+        self,
+        batch_id: str,
+        status: BatchStatus,
+        *,
+        error_message: str | None = None,
+    ) -> Batch:
+        batch_ref = self._batches.document(batch_id)
+        # error_message stays coupled to the error state (see the protocol).
+        message = error_message if status is BatchStatus.ERROR else None
+
+        @self._transactional
+        def _update(txn: Transaction) -> Batch:
+            snapshot = batch_ref.get(transaction=txn)
+            if not snapshot.exists:
+                raise BatchNotFoundError(batch_id)
+            txn.update(
+                batch_ref,
+                {"status": status.value, "error_message": message},
+            )
+            current = _from_document(snapshot.to_dict())
+            current.status = status
+            current.error_message = message
+            return current
+
+        return _update(self._client.transaction())
+
     def delete(self, user_id: str, batch_id: str) -> None:
         batch_ref = self._batches.document(batch_id)
 
