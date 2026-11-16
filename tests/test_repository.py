@@ -70,6 +70,42 @@ def test_list_returns_only_owner_batches_newest_first(repo: InMemoryBatchReposit
     assert [b.name for b in listed] == ["newer", "older"]
 
 
+def test_claim_oldest_created_returns_none_when_empty(repo: InMemoryBatchRepository):
+    # No batches, and a 'creating' batch doesn't count — only 'created' is claimable.
+    repo.create(Batch(user_id="u1", name="pending"))  # status CREATING
+    assert repo.claim_oldest_created() is None
+
+
+def test_claim_oldest_created_picks_oldest_and_flips_to_processing(
+    repo: InMemoryBatchRepository,
+):
+    from datetime import datetime, timedelta, timezone
+
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    older = repo.create(Batch(user_id="u1", name="older", created=base))
+    newer = repo.create(
+        Batch(user_id="u2", name="newer", created=base + timedelta(hours=1))
+    )
+    repo.update_status(older.id, BatchStatus.CREATED)
+    repo.update_status(newer.id, BatchStatus.CREATED)
+
+    claimed = repo.claim_oldest_created()
+    assert claimed is not None
+    assert claimed.id == older.id  # oldest first, across users
+    assert claimed.status is BatchStatus.PROCESSING
+    # It is no longer claimable; the next claim returns the newer one.
+    assert repo.claim_oldest_created().id == newer.id
+
+
+def test_claim_oldest_created_clears_stale_error(repo: InMemoryBatchRepository):
+    created = repo.create(Batch(user_id="u1", name="b"))
+    repo.update_status(created.id, BatchStatus.ERROR, error_message="old failure")
+    repo.update_status(created.id, BatchStatus.CREATED)  # retried: back to created
+    claimed = repo.claim_oldest_created()
+    assert claimed is not None
+    assert claimed.error_message is None
+
+
 def test_rename_changes_name(repo: InMemoryBatchRepository):
     created = repo.create(Batch(user_id="u1", name="before"))
     renamed = repo.rename("u1", created.id, "after")

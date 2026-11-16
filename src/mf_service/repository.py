@@ -55,6 +55,18 @@ class BatchRepository(Protocol):
     def list_for_user(self, user_id: str) -> list[Batch]:
         """Return all of the user's batches, newest first."""
 
+    def claim_oldest_created(self) -> Batch | None:
+        """Atomically claim the oldest ``created`` batch for processing.
+
+        Finds the oldest batch in :attr:`~mf_service.domain.BatchStatus.CREATED`
+        (across all users), flips it to
+        :attr:`~mf_service.domain.BatchStatus.PROCESSING`, and returns it — or
+        returns ``None`` if no batch is waiting. Find-and-flip happen as one
+        atomic step so two concurrent workers can never claim the same batch
+        (one wins, the other sees nothing to claim). Not scoped by ``user_id``:
+        the processing worker acts server-side across every user's batches.
+        """
+
     def rename(self, user_id: str, batch_id: str, name: str) -> Batch:
         """Rename the user's batch and return the updated entity.
 
@@ -122,6 +134,20 @@ class InMemoryBatchRepository:
     def list_for_user(self, user_id: str) -> list[Batch]:
         owned = [b for b in self._batches.values() if b.user_id == user_id]
         return sorted(owned, key=lambda b: b.created, reverse=True)
+
+    def claim_oldest_created(self) -> Batch | None:
+        with self._lock:
+            created = [
+                b
+                for b in self._batches.values()
+                if b.status is BatchStatus.CREATED
+            ]
+            if not created:
+                return None
+            oldest = min(created, key=lambda b: b.created)
+            oldest.status = BatchStatus.PROCESSING
+            oldest.error_message = None
+            return oldest
 
     def rename(self, user_id: str, batch_id: str, name: str) -> Batch:
         with self._lock:

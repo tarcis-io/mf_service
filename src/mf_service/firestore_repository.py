@@ -173,6 +173,47 @@ class FirestoreBatchRepository:
         ).order_by("created", direction=Query.DESCENDING)
         return [_from_document(doc.to_dict()) for doc in query.stream()]
 
+    def claim_oldest_created(self) -> Batch | None:
+        # Query for the oldest `created` batch (needs a composite index on
+        # (status, created) — Firestore names it on first run). Then flip it to
+        # `processing` inside a transaction that re-reads the doc and only
+        # commits if it is *still* created, so a batch another worker claimed in
+        # the gap is skipped rather than double-processed.
+        from google.cloud.firestore import FieldFilter, Query
+
+        query = (
+            self._batches.where(
+                filter=FieldFilter("status", "==", BatchStatus.CREATED.value)
+            )
+            .order_by("created", direction=Query.ASCENDING)
+            .limit(1)
+        )
+        candidates = list(query.stream())
+        if not candidates:
+            return None
+        batch_ref = self._batches.document(candidates[0].to_dict()["id"])
+
+        @self._transactional
+        def _claim(txn: Transaction) -> Batch | None:
+            snapshot = batch_ref.get(transaction=txn)
+            if not snapshot.exists:
+                return None
+            current = _from_document(snapshot.to_dict())
+            if current.status is not BatchStatus.CREATED:
+                return None  # another worker claimed it first
+            txn.update(
+                batch_ref,
+                {
+                    "status": BatchStatus.PROCESSING.value,
+                    "error_message": None,
+                },
+            )
+            current.status = BatchStatus.PROCESSING
+            current.error_message = None
+            return current
+
+        return _claim(self._client.transaction())
+
     def rename(self, user_id: str, batch_id: str, name: str) -> Batch:
         batch_ref = self._batches.document(batch_id)
 

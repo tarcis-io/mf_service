@@ -48,8 +48,10 @@ dev = [
 ]
 
 [project.scripts]
-# Console entry point: `mf-service` launches the ASGI app with uvicorn.
+# Console entry points: `mf-service` launches the ASGI app with uvicorn;
+# `mf-service-worker` runs one batch-processing pass (point a scheduler at it).
 mf-service = "mf_service.__main__:main"
+mf-service-worker = "mf_service.jobs:main"
 
 [project.urls]
 Homepage = "https://massflowai.com"

@@ -67,15 +67,21 @@ class _FakeQuery:
         self._value = value
         self._order_by: str | None = None
         self._descending = False
+        self._limit: int | None = None
 
     def order_by(self, field: str, direction: str | None = None) -> _FakeQuery:
         self._order_by = field
         self._descending = direction == _FakeQuery.DESCENDING
         return self
 
-    # Mirrors firestore.Query.DESCENDING so the repo's direction= argument
-    # resolves against the fake the same way it does against the real client.
+    def limit(self, count: int) -> _FakeQuery:
+        self._limit = count
+        return self
+
+    # Mirror firestore.Query.DESCENDING / ASCENDING so the repo's direction=
+    # argument resolves against the fake as it does against the real client.
     DESCENDING = "DESCENDING"
+    ASCENDING = "ASCENDING"
 
     def stream(self):
         matched = [
@@ -87,6 +93,8 @@ class _FakeQuery:
             matched.sort(
                 key=lambda d: d[self._order_by], reverse=self._descending
             )
+        if self._limit is not None:
+            matched = matched[: self._limit]
         for data in matched:
             yield _FakeSnapshot(data)
 
@@ -270,6 +278,34 @@ def test_update_status_sets_status_and_error(repo: FirestoreBatchRepository):
     # Non-error status clears the message.
     repo.update_status(created.id, BatchStatus.CREATED, error_message="x")
     assert repo.get("u1", created.id).error_message is None
+
+
+def test_claim_oldest_created_returns_none_when_none_waiting(
+    repo: FirestoreBatchRepository,
+):
+    repo.create(Batch(user_id="u1", name="pending"))  # status CREATING
+    assert repo.claim_oldest_created() is None
+
+
+def test_claim_oldest_created_picks_oldest_and_flips(repo: FirestoreBatchRepository):
+    from datetime import timedelta
+
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    older = repo.create(Batch(user_id="u1", name="older", created=base))
+    newer = repo.create(
+        Batch(user_id="u2", name="newer", created=base + timedelta(hours=1))
+    )
+    repo.update_status(older.id, BatchStatus.CREATED)
+    repo.update_status(newer.id, BatchStatus.CREATED)
+
+    claimed = repo.claim_oldest_created()
+    assert claimed is not None
+    assert claimed.id == older.id
+    assert claimed.status is BatchStatus.PROCESSING
+    # No longer claimable; the next claim is the newer batch.
+    assert repo.claim_oldest_created().id == newer.id
+    # And once both are processing, nothing is left to claim.
+    assert repo.claim_oldest_created() is None
 
 
 def test_update_status_missing_raises(repo: FirestoreBatchRepository):

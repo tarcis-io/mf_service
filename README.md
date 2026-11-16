@@ -37,6 +37,13 @@ The server binds to `MF_SERVICE_HOST`:`MF_SERVICE_PORT` (default
 `0.0.0.0:8000`). Interactive API docs are served at `/docs` and the OpenAPI
 schema at `/openapi.json`.
 
+The batch-processing worker is a separate process, run on a schedule (see
+[Processing](#processing)):
+
+```bash
+mf-service-worker               # process one waiting batch, then exit
+```
+
 ## Deploy (Google Cloud Run)
 
 The `Procfile` defines the web process Cloud Run runs when deployed from source
@@ -112,11 +119,9 @@ creating → created → processing → processed
 
 A new batch is born `creating` — creation and the upload of its files are a
 single action — and becomes `created` once every file is in storage (see
-below). The `processing` → `processed` steps happen later, driven by the engine
-out-of-band through `BatchRepository.update_status` (not through this CRUD API);
-that writer is a planned addition — the states and the status seam exist, but no
-endpoint advances a batch past `created` yet. `error` is the shared failure
-state for either phase.
+below). The `processing` → `processed` steps happen later, driven by the
+recurring processing worker (see [Processing](#processing)), not through this
+CRUD API. `error` is the shared failure state for either phase.
 
 | Method & path                   | Body                 | Description                                                    |
 | ------------------------------- | -------------------- | -------------------------------------------------------------- |
@@ -211,6 +216,47 @@ curl -OJ http://localhost:8000/batches/{id}/files/mzmine_annotations.csv \
   -H "X-User-Id: user-123"
 ```
 
+## Processing
+
+Batches are processed by a recurring **worker**, separate from the HTTP API. One
+pass does the following:
+
+1. Atomically claim the oldest `created` batch and flip it to `processing`. The
+   claim is a single transaction, so two overlapping passes never grab the same
+   batch (one wins, the other finds nothing to do).
+2. Run the **pipeline** (`mf_service.processing`) over the batch's files: an
+   ordered sequence of tasks sharing one context. Today there is one task,
+   which runs `mf_engine`'s `GNPSProcessor` over the three GNPS inputs
+   (`mzmine_annotations.csv`, `gnps_feature_table_reformated.csv`, and
+   `gnps_merged_results.tsv`) and produces the per-feature annotation table.
+   Adding a task to the pipeline extends processing without touching the worker
+   or the routes.
+3. Write the result to storage as `annotations.csv` (under the same
+   `<batch_id>/` prefix as the inputs, so it lists and downloads through the
+   same endpoints), then mark the batch `processed`. If any task raises, the
+   batch becomes `error` with the failure text and **no** partial output is
+   written.
+
+The worker processes one batch per pass and exits, so it is driven on a cadence
+(the intended interval is **every 5 minutes**). Run one pass with the installed
+console script:
+
+```bash
+mf-service-worker                 # claim + process one batch, then exit
+python -m mf_service.jobs         # equivalently, as a module
+```
+
+Schedule it however your platform prefers — a cron entry, a Cloud Run job on a
+5-minute schedule, or Cloud Scheduler triggering a small runner. For example, a
+crontab line:
+
+```
+*/5 * * * * mf-service-worker
+```
+
+Because each pass claims atomically and processes a single batch, running it
+more often (or briefly overlapping) is safe — it just drains the queue faster.
+
 ## Configuration
 
 Configuration is centralised in `mf_service.config.Settings` (a
@@ -290,6 +336,8 @@ mf_service/
 │       ├── firestore_repository.py  # Firestore-backed BatchRepository
 │       ├── storage.py               # StorageGateway contract + GCS/in-memory impls
 │       ├── uploads.py               # required file set + background upload task
+│       ├── processing.py            # engine pipeline (GNPS task) + CSV helpers
+│       ├── jobs.py                  # recurring batch-processing worker
 │       ├── deps.py                  # Depends seam (engine, repository, storage, X-User-Id)
 │       ├── schemas.py               # request/response models (API contracts)
 │       ├── py.typed                 # PEP 561 typing marker
@@ -299,7 +347,7 @@ mf_service/
 │               ├── __init__.py      # aggregates the v1 routes into one router
 │               ├── health.py        # GET /health
 │               ├── version.py       # GET /version
-│               └── batches.py       # CRUD /batches
+│               └── batches.py       # CRUD /batches + files (list/download)
 └── tests/
     ├── conftest.py                  # shared fixtures (TestClient, in-memory repo)
     ├── test_package.py              # package surface + app factory
@@ -312,7 +360,9 @@ mf_service/
     ├── test_firestore_repository.py # Firestore repo (fake client)
     ├── test_storage.py              # StorageGateway (in-memory + GCS seam)
     ├── test_uploads.py              # background upload task (status + paths)
-    └── test_batches.py              # /batches CRUD + multipart upload endpoint
+    ├── test_processing.py           # pipeline + GNPS task (fake engine)
+    ├── test_jobs.py                 # recurring processing worker
+    └── test_batches.py              # /batches CRUD + files + multipart upload
 ```
 
 This uses the **src layout** so tests always run against the installed package,
@@ -320,20 +370,26 @@ not a stray copy on the path — matching `mf_engine`. Routes are grouped under
 `api/v1`, so a second API version (or a new endpoint) slots in without
 disturbing the existing ones.
 
-## Adding engine-backed endpoints
+## Extending the engine work
 
-Beyond the `/health` and `/version` identity endpoints and the `/batches` CRUD
-(which uploads inputs to storage), the next step is routes that call the engine
-to process an uploaded batch. The seam for that is
-`mf_service.deps`: it exposes a `Depends` provider per engine processor (e.g.
-`get_gnps_processor` / the `GNPSProcessorDep` alias), so a route declares the
-processor it needs and the wiring — construction, lifetime, lazy import of
-`mf_engine` — stays in one place. Tests swap a processor via
-`app.dependency_overrides`, the same mechanism `create_app` uses for settings.
+The engine runs in the processing **pipeline** (`mf_service.processing`), not in
+a request handler — the HTTP API only manages batches and their files, while the
+worker does the CPU-bound `mf_engine` work out of band. To add a processing step
+(scoring, summaries, group comparisons, a second processor, ...), write a
+`PipelineTask` — a class with `run(ctx)` that reads inputs via
+`ctx.storage.download(...)` and records outputs onto `ctx.outputs` — and append
+it to `DEFAULT_PIPELINE`. The worker, the claim logic, and the routes stay
+untouched; the new output file lists and downloads through the existing
+endpoints automatically.
 
-Keep engine-backed routes **synchronous** (`def`, not `async def`): the engine
-does CPU-bound pandas work, which FastAPI runs in a worker threadpool. An
-`async def` route must only ever `await` real I/O — blocking work inside one
-stalls the event loop for every request. Cross-cutting concerns (CORS,
-exception handlers mapping engine errors to HTTP, request-id/timing middleware)
-are registered in `create_app`, which marks the spot.
+Engine processors are obtained through `mf_service.deps` (e.g. `get_gnps_processor`,
+cached per process, `mf_engine` imported lazily), so the worker's `main()` builds
+one the same way the app builds its dependencies, and tests swap a fake pipeline
+or processor without a real engine.
+
+Should a *synchronous, request-time* engine route ever be needed, keep it `def`
+(not `async def`): the engine does CPU-bound pandas work, which FastAPI runs in a
+worker threadpool, whereas a blocking `async def` stalls the event loop.
+Cross-cutting concerns (CORS, exception handlers mapping domain errors to HTTP,
+request-id/timing middleware) are registered in `create_app`, which marks the
+spot.
