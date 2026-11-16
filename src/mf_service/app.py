@@ -16,9 +16,11 @@ from mf_service.api.v1 import router as v1_router
 from mf_service.api.v1.batches import (
     batch_not_found_handler,
     duplicate_name_handler,
+    object_not_found_handler,
 )
 from mf_service.config import Settings, get_settings
 from mf_service.repository import BatchNotFoundError, DuplicateBatchNameError
+from mf_service.storage import ObjectNotFoundError
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -50,6 +52,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # middleware would be registered here too, before the routers are mounted.)
     app.add_exception_handler(BatchNotFoundError, batch_not_found_handler)
     app.add_exception_handler(DuplicateBatchNameError, duplicate_name_handler)
+    app.add_exception_handler(ObjectNotFoundError, object_not_found_handler)
 
     app.include_router(v1_router)
 

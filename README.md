@@ -118,13 +118,15 @@ that writer is a planned addition — the states and the status seam exist, but 
 endpoint advances a batch past `created` yet. `error` is the shared failure
 state for either phase.
 
-| Method & path         | Body                 | Description                                                    |
-| --------------------- | -------------------- | -------------------------------------------------------------- |
-| `POST /batches`       | multipart (see below)| Create a batch + upload its files. `409` if the name is taken. |
-| `GET /batches`        | —                    | List the caller's batches, newest first.                       |
-| `GET /batches/{id}`   | —                    | Fetch one batch. `404` if absent.                              |
-| `PATCH /batches/{id}` | `{ "name" }`         | Rename. `404` if absent, `409` on dup name.                    |
-| `DELETE /batches/{id}`| —                    | Delete. `404` if absent.                                       |
+| Method & path                   | Body                 | Description                                                    |
+| ------------------------------- | -------------------- | -------------------------------------------------------------- |
+| `POST /batches`                 | multipart (see below)| Create a batch + upload its files. `409` if the name is taken. |
+| `GET /batches`                  | —                    | List the caller's batches, newest first.                       |
+| `GET /batches/{id}`             | —                    | Fetch one batch. `404` if absent.                              |
+| `GET /batches/{id}/files`       | —                    | List the batch's stored files. `404` if the batch is absent.   |
+| `GET /batches/{id}/files/{name}`| —                    | Download one file. `404` if the batch or file is absent.       |
+| `PATCH /batches/{id}`           | `{ "name" }`         | Rename. `404` if absent, `409` on dup name.                    |
+| `DELETE /batches/{id}`          | —                    | Delete. `404` if absent.                                       |
 
 **Creating a batch (file upload).** `POST /batches` is `multipart/form-data`: a
 `name` field plus five **required** files (a missing one is `422`):
@@ -176,6 +178,37 @@ real backend fails with an error containing a one-click link to create it.
   "status": "creating",
   "error_message": null
 }
+```
+
+**Files.** A batch's uploaded files can be listed and downloaded. Both are
+scoped by `(user_id, batch_id)`: the batch is resolved first, so a batch that
+is absent or owned by another user is a `404` before storage is touched.
+
+`GET /batches/{id}/files` lists what is actually in storage under
+`<batch_id>/` — so a batch still `creating` (or in `error`) may list fewer than
+the full set. Each entry carries the filename, size, content type, and last-
+modified time:
+
+```json
+// GET /batches/{id}/files
+[
+  {
+    "filename": "mzmine_annotations.csv",
+    "size": 20480,
+    "content_type": "text/csv",
+    "updated": "2026-01-15T09:30:05Z"
+  }
+]
+```
+
+`GET /batches/{id}/files/{filename}` streams one file back as an attachment
+(`application/octet-stream`); a filename that isn't stored is a `404`. The
+filename is a single path segment, so it cannot contain `/` and cannot escape
+the batch's own prefix.
+
+```bash
+curl -OJ http://localhost:8000/batches/{id}/files/mzmine_annotations.csv \
+  -H "X-User-Id: user-123"
 ```
 
 ## Configuration

@@ -16,6 +16,7 @@ from fastapi import Form
 from pydantic import BaseModel, Field, StringConstraints
 
 from mf_service.domain import Batch, BatchStatus
+from mf_service.storage import StoredObject
 
 
 class HealthResponse(BaseModel):
@@ -131,4 +132,36 @@ class BatchResponse(BaseModel):
             created=batch.created,
             status=batch.status,
             error_message=batch.error_message,
+        )
+
+
+class BatchFileResponse(BaseModel):
+    """One of a batch's stored files, as returned by the files listing."""
+
+    filename: str = Field(
+        description="The file's name within the batch.",
+        examples=["mzmine_annotations.csv"],
+    )
+    size: int = Field(
+        description="Size of the file in bytes.",
+        examples=[20480],
+    )
+    content_type: str = Field(
+        description="The file's MIME type.",
+        examples=["text/csv"],
+    )
+    updated: datetime | None = Field(
+        default=None,
+        description="When the file was last written (UTC), if known.",
+        examples=["2026-01-15T09:30:05Z"],
+    )
+
+    @classmethod
+    def from_stored(cls, obj: StoredObject) -> BatchFileResponse:
+        """Build the response model from a storage :class:`StoredObject`."""
+        return cls(
+            filename=obj.name,
+            size=obj.size,
+            content_type=obj.content_type,
+            updated=obj.updated,
         )

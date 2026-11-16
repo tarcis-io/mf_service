@@ -134,6 +134,69 @@ def test_get_missing_is_404(batch_client: TestClient):
     assert resp.status_code == 404
 
 
+# --- Files: list + download -------------------------------------------------
+
+
+def test_list_files_returns_all_uploaded(batch_client: TestClient):
+    # The create's background upload finishes before the response returns, so
+    # all five files are in storage by the time we list them.
+    created = _create(batch_client, "withfiles").json()
+    resp = batch_client.get(f"/batches/{created['id']}/files", headers=USER)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {f["filename"] for f in body} == set(REQUIRED_FILES)
+    # Metadata is populated for each file.
+    one = next(f for f in body if f["filename"] == "gnps_merged_results.tsv")
+    assert one["content_type"] == "text/tab-separated-values"
+    assert one["size"] > 0
+
+
+def test_list_files_missing_batch_is_404(batch_client: TestClient):
+    resp = batch_client.get("/batches/no-such-id/files", headers=USER)
+    assert resp.status_code == 404
+
+
+def test_list_files_other_users_batch_is_404(batch_client: TestClient):
+    created = _create(batch_client, "mine", USER).json()
+    resp = batch_client.get(f"/batches/{created['id']}/files", headers=OTHER)
+    assert resp.status_code == 404
+
+
+def test_download_file_returns_bytes(batch_client: TestClient):
+    created = _create(batch_client, "dl").json()
+    resp = batch_client.get(
+        f"/batches/{created['id']}/files/mzmine_annotations.csv", headers=USER
+    )
+    assert resp.status_code == 200
+    # _files() uploads "data for <field>" as each payload.
+    assert resp.content == b"data for mzmine_annotations"
+    assert "attachment" in resp.headers["content-disposition"]
+    assert "mzmine_annotations.csv" in resp.headers["content-disposition"]
+
+
+def test_download_missing_file_is_404(batch_client: TestClient):
+    created = _create(batch_client, "dl").json()
+    resp = batch_client.get(
+        f"/batches/{created['id']}/files/nope.csv", headers=USER
+    )
+    assert resp.status_code == 404
+
+
+def test_download_missing_batch_is_404(batch_client: TestClient):
+    resp = batch_client.get(
+        "/batches/no-such-id/files/mzmine_annotations.csv", headers=USER
+    )
+    assert resp.status_code == 404
+
+
+def test_download_other_users_batch_is_404(batch_client: TestClient):
+    created = _create(batch_client, "mine", USER).json()
+    resp = batch_client.get(
+        f"/batches/{created['id']}/files/mzmine_annotations.csv", headers=OTHER
+    )
+    assert resp.status_code == 404
+
+
 def test_update_renames(batch_client: TestClient):
     created = _create(batch_client, "before").json()
     resp = batch_client.patch(

@@ -16,11 +16,12 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Form, Request, UploadFile, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from mf_service.deps import BatchRepositoryDep, StorageGatewayDep, UserIdDep
 from mf_service.domain import Batch
 from mf_service.schemas import (
+    BatchFileResponse,
     BatchNameForm,
     BatchResponse,
     BatchUpdateRequest,
@@ -117,6 +118,66 @@ def get_batch(
     return BatchResponse.from_domain(batch)
 
 
+@router.get(
+    "/{batch_id}/files",
+    response_model=list[BatchFileResponse],
+    summary="List a batch's files",
+    responses={status.HTTP_404_NOT_FOUND: {"description": "No such batch"}},
+)
+def list_batch_files(
+    batch_id: str,
+    user_id: UserIdDep,
+    repo: BatchRepositoryDep,
+    storage: StorageGatewayDep,
+) -> list[BatchFileResponse]:
+    """List the files stored for one of the caller's batches.
+
+    Resolves the batch by ``(user_id, batch_id)`` first — a missing batch, or
+    one owned by another user, is a ``404`` — then lists the objects actually
+    in storage under ``<batch_id>/``. A batch whose upload has not finished (or
+    failed) may list fewer than the full set.
+    """
+    repo.get(user_id, batch_id)  # ownership/existence check (raises -> 404)
+    objects = storage.list(f"{batch_id}/")
+    return [BatchFileResponse.from_stored(obj) for obj in objects]
+
+
+@router.get(
+    "/{batch_id}/files/{filename}",
+    summary="Download one of a batch's files",
+    response_class=Response,
+    responses={
+        status.HTTP_200_OK: {
+            "content": {"application/octet-stream": {}},
+            "description": "The file's bytes.",
+        },
+        status.HTTP_404_NOT_FOUND: {"description": "No such batch or file"},
+    },
+)
+def download_batch_file(
+    batch_id: str,
+    filename: str,
+    user_id: UserIdDep,
+    repo: BatchRepositoryDep,
+    storage: StorageGatewayDep,
+) -> Response:
+    """Stream one file from one of the caller's batches.
+
+    Resolves the batch by ``(user_id, batch_id)`` first — a missing batch, or
+    one owned by another user, is a ``404`` — then streams the object at
+    ``<batch_id>/<filename>``. A missing file is also a ``404``. ``filename`` is
+    a single path segment (it cannot contain ``/``), so it cannot escape the
+    batch's prefix.
+    """
+    batch = repo.get(user_id, batch_id)  # ownership/existence check (-> 404)
+    data = storage.download(f"{batch.id}/{filename}")
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.patch(
     "/{batch_id}",
     response_model=BatchResponse,
@@ -162,6 +223,7 @@ __all__ = [
     "router",
     "batch_not_found_handler",
     "duplicate_name_handler",
+    "object_not_found_handler",
 ]
 
 
@@ -170,6 +232,14 @@ async def batch_not_found_handler(request: Request, exc: Exception) -> JSONRespo
     return JSONResponse(
         status_code=status.HTTP_404_NOT_FOUND,
         content={"detail": f"Batch not found: {exc}"},
+    )
+
+
+async def object_not_found_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Map a missing stored file to ``404 Not Found``."""
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={"detail": f"File not found: {exc}"},
     )
 
 
