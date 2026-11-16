@@ -68,7 +68,7 @@ def test_process_next_only_claims_created_batches():
 def test_process_next_marks_error_on_pipeline_failure():
     repo = InMemoryBatchRepository()
     storage = InMemoryStorageGateway()
-    batch = _created_batch(repo, "b")
+    _created_batch(repo, "b")
 
     handled = process_next_batch(repo, storage, None, pipeline=(_BoomTask(),))
 
@@ -98,7 +98,7 @@ def test_process_next_deleted_mid_processing_is_noop(monkeypatch):
 
     repo = InMemoryBatchRepository()
     storage = InMemoryStorageGateway()
-    batch = _created_batch(repo, "b")
+    _created_batch(repo, "b")
 
     real_update = repo.update_status
 
@@ -118,7 +118,7 @@ def test_process_next_failure_on_deleted_batch_is_noop(monkeypatch):
 
     repo = InMemoryBatchRepository()
     storage = InMemoryStorageGateway()
-    batch = _created_batch(repo, "b")
+    _created_batch(repo, "b")
 
     def _update(batch_id, status, *, error_message=None):
         raise BatchNotFoundError(batch_id)  # batch vanished before the ERROR write

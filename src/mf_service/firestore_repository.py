@@ -191,7 +191,10 @@ class FirestoreBatchRepository:
         candidates = list(query.stream())
         if not candidates:
             return None
-        batch_ref = self._batches.document(candidates[0].to_dict()["id"])
+        # Rebuild via _from_document (which guards a vanished doc) to get the id
+        # type-safely, rather than indexing the optional to_dict() directly.
+        candidate = _from_document(candidates[0].to_dict())
+        batch_ref = self._batches.document(candidate.id)
 
         @self._transactional
         def _claim(txn: Transaction) -> Batch | None:

@@ -308,6 +308,57 @@ def test_claim_oldest_created_picks_oldest_and_flips(repo: FirestoreBatchReposit
     assert repo.claim_oldest_created() is None
 
 
+def _race_claim(repo, created, mutate):
+    """Run claim_oldest_created with a race injected between the query and the
+    transactional re-read: ``mutate(store)`` is applied the first time the
+    candidate doc is re-read inside the transaction, simulating another worker
+    (or a delete) winning the gap.
+    """
+    collection = repo._batches
+    store = collection.store
+    original = collection.document
+
+    def _document(doc_id):
+        doc = original(doc_id)
+        if doc_id == created.id:
+            real_get = doc.get
+
+            def _get(transaction=None):
+                mutate(store)  # the raced change lands just before the re-read
+                return real_get(transaction=transaction)
+
+            doc.get = _get
+        return doc
+
+    collection.document = _document
+    try:
+        return repo.claim_oldest_created()
+    finally:
+        collection.document = original
+
+
+def test_claim_skips_candidate_deleted_before_transaction(
+    repo: FirestoreBatchRepository,
+):
+    # The candidate is gone by the time the transaction re-reads it.
+    created = repo.create(Batch(user_id="u1", name="b"))
+    repo.update_status(created.id, BatchStatus.CREATED)
+    result = _race_claim(repo, created, lambda store: store.pop(created.id, None))
+    assert result is None
+
+
+def test_claim_skips_candidate_no_longer_created(repo: FirestoreBatchRepository):
+    # Another worker flipped the candidate out of `created` first.
+    created = repo.create(Batch(user_id="u1", name="b"))
+    repo.update_status(created.id, BatchStatus.CREATED)
+
+    def _steal(store):
+        store[created.id]["status"] = BatchStatus.PROCESSING.value
+
+    result = _race_claim(repo, created, _steal)
+    assert result is None
+
+
 def test_update_status_missing_raises(repo: FirestoreBatchRepository):
     with pytest.raises(BatchNotFoundError):
         repo.update_status("missing", BatchStatus.CREATED)
