@@ -48,8 +48,7 @@ def _name_key(user_id: str, name: str) -> str:
     per pair — which is exactly the uniqueness scope we need. A plain SHA-256 is
     used for a stable key, not for security.
     """
-    digest = hashlib.sha256(f"{user_id}\x00{name}".encode()).hexdigest()
-    return digest
+    return hashlib.sha256(f"{user_id}\x00{name}".encode()).hexdigest()
 
 
 def _to_document(batch: Batch) -> dict[str, Any]:

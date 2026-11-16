@@ -37,6 +37,29 @@ The server binds to `MF_SERVICE_HOST`:`MF_SERVICE_PORT` (default
 `0.0.0.0:8000`). Interactive API docs are served at `/docs` and the OpenAPI
 schema at `/openapi.json`.
 
+## Deploy (Google Cloud Run)
+
+The `Procfile` defines the web process Cloud Run runs when deployed from source
+with [Google Cloud buildpacks](https://cloud.google.com/docs/buildpacks/overview):
+
+```
+web: uvicorn mf_service:app --host 0.0.0.0 --port ${PORT:-8000}
+```
+
+Cloud Run injects a `PORT` environment variable and expects the container to
+listen on it at `0.0.0.0`; the process binds `$PORT` (falling back to `8000`
+locally). Note this is a different variable from `MF_SERVICE_PORT` — the
+Procfile invokes `uvicorn` directly rather than the `mf-service` console script
+precisely so it honours Cloud Run's `PORT`. Deploy with:
+
+```bash
+gcloud run deploy mf-service --source .
+```
+
+On Cloud Run, Firestore's project and credentials are auto-detected from the
+service's identity, so `MF_SERVICE_FIRESTORE_PROJECT` is normally left unset
+(see Configuration below).
+
 ## Endpoints
 
 ### `GET /health`
@@ -117,15 +140,15 @@ pydantic-settings model). Fields are overridable via an environment variable
 with the `MF_SERVICE_` prefix, or a `.env` file — no code reads the environment
 directly. See `.env.example` for the available variables.
 
-| Variable                 | Default           | Description                         |
-| ------------------------ | ----------------- | ----------------------------------- |
-| `MF_SERVICE_HOST`                  | `0.0.0.0`     | Bind address for the server.                      |
-| `MF_SERVICE_PORT`                  | `8000`        | Bind port for the server.                         |
-| `MF_SERVICE_NAME`                  | package name  | Overrides the reported name.                      |
-| `MF_SERVICE_DESCRIPTION`           | package summary | Overrides the reported description.             |
-| `MF_SERVICE_FIRESTORE_PROJECT`     | auto-detected | GCP project for Firestore; blank = auto-detect.   |
-| `MF_SERVICE_BATCHES_COLLECTION`    | `batches`     | Firestore collection for batch documents.         |
-| `MF_SERVICE_BATCH_NAMES_COLLECTION`| `batch_names` | Firestore collection for the name-uniqueness guard.|
+| Variable                             | Default         | Description                                         |
+| ------------------------------------ | --------------- | --------------------------------------------------- |
+| `MF_SERVICE_HOST`                    | `0.0.0.0`       | Bind address for the server.                        |
+| `MF_SERVICE_PORT`                    | `8000`          | Bind port for the server.                           |
+| `MF_SERVICE_NAME`                    | package name    | Overrides the reported name.                        |
+| `MF_SERVICE_DESCRIPTION`             | package summary | Overrides the reported description.                 |
+| `MF_SERVICE_FIRESTORE_PROJECT`       | auto-detected   | GCP project for Firestore; blank = auto-detect.     |
+| `MF_SERVICE_BATCHES_COLLECTION`      | `batches`       | Firestore collection for batch documents.           |
+| `MF_SERVICE_BATCH_NAMES_COLLECTION`  | `batch_names`   | Firestore collection for the name-uniqueness guard. |
 
 The reported `version` is **not** configurable: it is always read from the
 package metadata so it reflects the build that is actually deployed. Setting

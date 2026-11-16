@@ -113,7 +113,8 @@ def test_delete_removes_batch(batch_client: TestClient):
     created = _create(batch_client, "temp").json()
     resp = batch_client.delete(f"/batches/{created['id']}", headers=USER)
     assert resp.status_code == 204
-    assert batch_client.get(f"/batches/{created['id']}", headers=USER).status_code == 404
+    gone = batch_client.get(f"/batches/{created['id']}", headers=USER)
+    assert gone.status_code == 404
 
 
 def test_delete_missing_is_404(batch_client: TestClient):
