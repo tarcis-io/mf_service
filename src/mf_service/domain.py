@@ -61,8 +61,9 @@ class Batch:
     construction so a freshly built ``Batch`` is already complete. ``status``
     starts at :attr:`BatchStatus.CREATING` — the batch's files are uploaded
     right after creation — and advances to :attr:`BatchStatus.CREATED` once they
-    are stored, then through the engine's processing states out-of-band (not via
-    the CRUD API). ``error_message`` is populated only when ``status`` is
+    are stored, then through the engine's processing states, driven by the
+    background worker (:mod:`mf_service.jobs`), not the CRUD API.
+    ``error_message`` is populated only when ``status`` is
     :attr:`BatchStatus.ERROR`.
     """
 

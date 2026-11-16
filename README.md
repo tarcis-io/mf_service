@@ -223,7 +223,10 @@ pass does the following:
 
 1. Atomically claim the oldest `created` batch and flip it to `processing`. The
    claim is a single transaction, so two overlapping passes never grab the same
-   batch (one wins, the other finds nothing to do).
+   batch (one wins, the other finds nothing to do). The claim query (filter on
+   `status`, order by `created`) needs a Firestore composite index on
+   `(status, created)` — like the listing index, Firestore's first-run error
+   links straight to creating it.
 2. Run the **pipeline** (`mf_service.processing`) over the batch's files: an
    ordered sequence of tasks sharing one context. Today there is one task,
    which runs `mf_engine`'s `GNPSProcessor` over the three GNPS inputs
