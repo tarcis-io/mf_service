@@ -94,3 +94,10 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_return_any = true
 no_implicit_optional = true
+
+# google-cloud-storage ships no type stubs or py.typed marker, so mypy can't
+# analyze it; ignore the missing import rather than letting it fail the run.
+# (google-cloud-firestore is typed and needs no such override.)
+[[tool.mypy.overrides]]
+module = ["google.cloud.storage", "google.cloud.exceptions"]
+ignore_missing_imports = true
