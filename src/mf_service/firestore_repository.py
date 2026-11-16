@@ -162,9 +162,16 @@ class FirestoreBatchRepository:
         return batch
 
     def list_for_user(self, user_id: str) -> list[Batch]:
-        query = self._batches.where("user_id", "==", user_id)
-        batches = [_from_document(doc.to_dict()) for doc in query.stream()]
-        return sorted(batches, key=lambda b: b.created, reverse=True)
+        # Filter by owner and sort newest-first in Firestore. Ordering by
+        # `created DESC` on a filtered query needs a composite index on
+        # (user_id, created) — Firestore's error names the exact index to
+        # create the first time this runs against a real backend.
+        from google.cloud.firestore import FieldFilter, Query
+
+        query = self._batches.where(
+            filter=FieldFilter("user_id", "==", user_id)
+        ).order_by("created", direction=Query.DESCENDING)
+        return [_from_document(doc.to_dict()) for doc in query.stream()]
 
     def rename(self, user_id: str, batch_id: str, name: str) -> Batch:
         batch_ref = self._batches.document(batch_id)

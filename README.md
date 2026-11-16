@@ -113,8 +113,10 @@ creating → created → processing → processed
 A new batch is born `creating` — creation and the upload of its files are a
 single action — and becomes `created` once every file is in storage (see
 below). The `processing` → `processed` steps happen later, driven by the engine
-out-of-band, not through this API. `error` is the shared failure state for
-either phase.
+out-of-band through `BatchRepository.update_status` (not through this CRUD API);
+that writer is a planned addition — the states and the status seam exist, but no
+endpoint advances a batch past `created` yet. `error` is the shared failure
+state for either phase.
 
 | Method & path         | Body                 | Description                                                    |
 | --------------------- | -------------------- | -------------------------------------------------------------- |
@@ -158,6 +160,11 @@ server-managed. Because Firestore has no unique constraints, uniqueness is
 enforced with a transaction that reserves the name via a guard document, so two
 concurrent creates of the same name cannot both succeed (see
 `mf_service.firestore_repository`).
+
+**Listing.** `GET /batches` filters by owner and orders newest-first in
+Firestore. That query (a `where` on `user_id` plus an `order_by` on `created`)
+needs a composite index on `(user_id, created DESC)`; the first run against a
+real backend fails with an error containing a one-click link to create it.
 
 ```json
 // 201 response to the POST /batches above

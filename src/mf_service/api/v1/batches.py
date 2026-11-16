@@ -25,7 +25,7 @@ from mf_service.schemas import (
     BatchResponse,
     BatchUpdateRequest,
 )
-from mf_service.uploads import REQUIRED_FILES, upload_batch_files
+from mf_service.uploads import REQUIRED_FILE_NAMES, upload_batch_files
 
 router = APIRouter(prefix="/batches", tags=["batches"])
 
@@ -65,12 +65,19 @@ async def create_batch(
     failure). The response therefore returns promptly with the newly created
     batch (status ``creating``), before the upload completes.
     """
+    # Map each form field to its stored filename through REQUIRED_FILE_NAMES
+    # (the single source of truth), keyed by field name — so a field can never
+    # be stored under the wrong filename.
+    files = {
+        "mzmine_annotations": mzmine_annotations,
+        "mzmine_full_feature_table": mzmine_full_feature_table,
+        "mzmine_metadata": mzmine_metadata,
+        "gnps_feature_table_reformated": gnps_feature_table_reformated,
+        "gnps_merged_results": gnps_merged_results,
+    }
     uploads = {
-        REQUIRED_FILES[0]: await mzmine_annotations.read(),
-        REQUIRED_FILES[1]: await mzmine_full_feature_table.read(),
-        REQUIRED_FILES[2]: await mzmine_metadata.read(),
-        REQUIRED_FILES[3]: await gnps_feature_table_reformated.read(),
-        REQUIRED_FILES[4]: await gnps_merged_results.read(),
+        REQUIRED_FILE_NAMES[field]: await upload.read()
+        for field, upload in files.items()
     }
 
     batch = Batch(user_id=user_id, name=name)

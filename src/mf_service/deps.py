@@ -68,10 +68,9 @@ UserIdDep = Annotated[str, Depends(get_user_id)]
 def _get_firestore_client(project: str | None) -> Any:
     """Build (once per process) the Firestore client.
 
-    Imported lazily so neither importing this module nor starting the app pulls
-    in ``google-cloud-firestore`` until a batch route is first used. ``project``
-    is passed (rather than read from settings here) so the cache key reflects
-    it; ``None`` lets the client auto-detect the project from GCP credentials.
+    Lazily imported (see :func:`get_gnps_processor`). ``project`` is passed
+    rather than read from settings so the cache key reflects it; ``None`` lets
+    the client auto-detect the project from GCP credentials.
     """
     from google.cloud import firestore
 
@@ -105,9 +104,9 @@ BatchRepositoryDep = Annotated[BatchRepository, Depends(get_batch_repository)]
 def _get_storage_client(project: str | None) -> Any:
     """Build (once per process) the Cloud Storage client.
 
-    Lazily constructed via :func:`~mf_service.storage.build_gcs_client`, which
-    imports ``google-cloud-storage`` only when first called; ``project`` is the
-    cache key (``None`` lets the client auto-detect it from GCP credentials).
+    Lazily constructed via :func:`~mf_service.storage.build_gcs_client` (see
+    :func:`get_gnps_processor`); ``project`` is the cache key (``None`` lets the
+    client auto-detect it from GCP credentials).
     """
     from mf_service.storage import build_gcs_client
 

@@ -8,14 +8,14 @@ from fastapi.testclient import TestClient
 from mf_service.domain import BatchStatus
 from mf_service.repository import InMemoryBatchRepository
 from mf_service.storage import InMemoryStorageGateway
-from mf_service.uploads import REQUIRED_FILES
+from mf_service.uploads import REQUIRED_FILE_NAMES, REQUIRED_FILES
 
 USER = {"X-User-Id": "user-1"}
 OTHER = {"X-User-Id": "user-2"}
 
-# The form-field names the endpoint declares — the required filenames without
-# their extension (e.g. "mzmine_annotations.csv" -> "mzmine_annotations").
-REQUIRED_FILES_FIELDS = [name.rsplit(".", 1)[0] for name in REQUIRED_FILES]
+# The form-field names the endpoint declares (the keys of the field->filename
+# map the route is built from).
+REQUIRED_FILES_FIELDS = list(REQUIRED_FILE_NAMES)
 
 
 def _files(omit: str | None = None) -> list[tuple[str, tuple[str, bytes, str]]]:

@@ -52,16 +52,43 @@ class _FakeDocument:
         return _FakeSnapshot(self._collection.store.get(self.id))
 
 
+class _FakeFieldFilter:
+    """Stand-in for ``firestore.FieldFilter(field, op, value)``."""
+
+    def __init__(self, field: str, _op: str, value) -> None:
+        self.field = field
+        self.value = value
+
+
 class _FakeQuery:
     def __init__(self, docs: dict, field: str, value) -> None:
         self._docs = docs
         self._field = field
         self._value = value
+        self._order_by: str | None = None
+        self._descending = False
+
+    def order_by(self, field: str, direction: str | None = None) -> _FakeQuery:
+        self._order_by = field
+        self._descending = direction == _FakeQuery.DESCENDING
+        return self
+
+    # Mirrors firestore.Query.DESCENDING so the repo's direction= argument
+    # resolves against the fake the same way it does against the real client.
+    DESCENDING = "DESCENDING"
 
     def stream(self):
-        for data in self._docs.values():
-            if data.get(self._field) == self._value:
-                yield _FakeSnapshot(data)
+        matched = [
+            data
+            for data in self._docs.values()
+            if data.get(self._field) == self._value
+        ]
+        if self._order_by is not None:
+            matched.sort(
+                key=lambda d: d[self._order_by], reverse=self._descending
+            )
+        for data in matched:
+            yield _FakeSnapshot(data)
 
 
 class _FakeCollection:
@@ -71,8 +98,8 @@ class _FakeCollection:
     def document(self, doc_id: str) -> _FakeDocument:
         return _FakeDocument(self, doc_id)
 
-    def where(self, field: str, _op: str, value) -> _FakeQuery:
-        return _FakeQuery(self.store, field, value)
+    def where(self, *, filter: _FakeFieldFilter) -> _FakeQuery:
+        return _FakeQuery(self.store, filter.field, filter.value)
 
 
 class _FakeTransaction:
@@ -122,6 +149,8 @@ def repo(monkeypatch) -> FirestoreBatchRepository:
     # no live Firestore package is needed.
     fake = types.ModuleType("google.cloud.firestore")
     fake.transactional = _fake_transactional
+    fake.FieldFilter = _FakeFieldFilter
+    fake.Query = _FakeQuery  # carries the DESCENDING sentinel used by order_by
     monkeypatch.setitem(sys.modules, "google.cloud.firestore", fake)
     return FirestoreBatchRepository(
         _FakeClient(),

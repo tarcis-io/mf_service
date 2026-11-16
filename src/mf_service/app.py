@@ -42,18 +42,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=resolved.version,
     )
 
-    # When an explicit settings is supplied, keep the route-level dependency in
-    # sync: routes resolving Depends(get_settings) get that same instance rather
-    # than the cached process singleton.
     if settings is not None:
         app.dependency_overrides[get_settings] = lambda: resolved
 
-    # Cross-cutting concerns are registered here, before the routers are
-    # mounted. Mapping the repository's domain errors to HTTP status codes in
-    # one place keeps the routes free of try/except: a raised
-    # DuplicateBatchNameError becomes 409 and a BatchNotFoundError becomes 404,
-    # wherever they originate. (CORS / request-id / timing middleware would be
-    # added here too.)
+    # Map the repository's domain errors to HTTP status codes in one place, so
+    # the routes stay free of try/except. (CORS / request-id / timing
+    # middleware would be registered here too, before the routers are mounted.)
     app.add_exception_handler(BatchNotFoundError, batch_not_found_handler)
     app.add_exception_handler(DuplicateBatchNameError, duplicate_name_handler)
 

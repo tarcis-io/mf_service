@@ -18,20 +18,29 @@ from mf_service.domain import BatchStatus
 from mf_service.repository import BatchNotFoundError, BatchRepository
 from mf_service.storage import StorageGateway
 
-# The exact files a batch must be created with. Order is irrelevant; the route
-# declares one required form field per name, so a missing one is a 422 before
-# this task ever runs.
-REQUIRED_FILES: tuple[str, ...] = (
-    "mzmine_annotations.csv",
-    "mzmine_full_feature_table.csv",
-    "mzmine_metadata.csv",
-    "gnps_feature_table_reformated.csv",
-    "gnps_merged_results.tsv",
-)
+# The exact files a batch must be created with, as {form field: stored filename}.
+# This is the single source of truth: the create route declares one required
+# UploadFile per field here, and maps each to its filename through this dict —
+# so field and filename can never drift out of lockstep. A missing field is a
+# 422 before this task ever runs.
+REQUIRED_FILE_NAMES: dict[str, str] = {
+    "mzmine_annotations": "mzmine_annotations.csv",
+    "mzmine_full_feature_table": "mzmine_full_feature_table.csv",
+    "mzmine_metadata": "mzmine_metadata.csv",
+    "gnps_feature_table_reformated": "gnps_feature_table_reformated.csv",
+    "gnps_merged_results": "gnps_merged_results.tsv",
+}
+
+# The stored filenames, derived from the mapping above (order follows it).
+REQUIRED_FILES: tuple[str, ...] = tuple(REQUIRED_FILE_NAMES.values())
 
 
 def _content_type(filename: str) -> str:
-    """MIME type for a batch input file, from its extension."""
+    """MIME type for a batch input file from its extension.
+
+    Batch inputs are only ever ``.csv`` or ``.tsv`` (see
+    :data:`REQUIRED_FILE_NAMES`), so anything that is not ``.tsv`` is CSV.
+    """
     return (
         "text/tab-separated-values"
         if filename.endswith(".tsv")
@@ -47,15 +56,18 @@ def upload_batch_files(
 ) -> None:
     """Upload a batch's files to storage, tracking status on the repository.
 
-    Keeps the batch ``creating``, writes each ``(name, data)`` in ``files`` to
-    ``<batch_id>/<name>``, then marks it ``created``. On any error the batch is
-    set to ``error`` with the failure text and the exception is swallowed — this
-    runs as a background task with no caller to propagate to, so the status is
-    how failure is reported.
+    The batch is already ``creating`` when this runs (its born state). The task
+    writes each ``(name, data)`` in ``files`` to ``<batch_id>/<name>`` and then
+    marks it ``created``. On any error the batch is set to ``error`` with the
+    failure text and the exception is swallowed — this runs as a background task
+    with no caller to propagate to, so the status is how failure is reported.
 
     If the batch was deleted before the task runs, the status writes raise
     :class:`~mf_service.repository.BatchNotFoundError`; that is treated as a
     benign no-op rather than an error state on a batch that no longer exists.
+    The leading write re-asserts ``creating`` purely to detect that case up
+    front, so a batch deleted before the task starts never gets orphan files
+    uploaded for it.
     """
     try:
         repository.update_status(batch_id, BatchStatus.CREATING)

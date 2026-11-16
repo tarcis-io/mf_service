@@ -145,9 +145,7 @@ class InMemoryBatchRepository:
             if batch is None:
                 raise BatchNotFoundError(batch_id)
             batch.status = status
-            # Keep error_message coupled to the error state: set it only with
-            # ERROR, clear it otherwise so a recovered batch carries no stale
-            # failure text.
+            # error_message stays coupled to the error state (see the protocol).
             batch.error_message = (
                 error_message if status is BatchStatus.ERROR else None
             )
