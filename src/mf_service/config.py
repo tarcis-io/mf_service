@@ -1,22 +1,15 @@
 """Application configuration.
 
 Settings are centralised here so the rest of the service never reads the
-environment directly. :class:`Settings` is a pydantic-settings model: most
-fields can be overridden by an environment variable with the ``MF_SERVICE_``
-prefix (e.g. ``MF_SERVICE_HOST``, ``MF_SERVICE_PORT``) or by a ``.env`` file,
-which keeps configuration out of the code and makes the service portable
-across environments (local, CI, staging, production).
+environment directly. :class:`Settings` is a pydantic-settings model: fields can
+be overridden by an environment variable with the ``MF_SERVICE_`` prefix (e.g.
+``MF_SERVICE_HOST``) or by a ``.env`` file.
 
-The application name, description, and version are sourced from the installed
-package metadata (``pyproject.toml`` is the single source of truth) rather than
-duplicated here, so they cannot drift. When the package is not installed (a bare
-source tree), they degrade the same way ``mf_service.__version__`` does.
-
-``name`` and ``description`` may still be overridden via the environment (for
-branding or multi-tenant deployments). ``version`` deliberately may **not**: it
-reports which build is actually deployed, so it is always metadata-derived and
-never read from the environment — a hand-set version would misreport reality
-and defeat the single-source-of-truth guarantee.
+``name``, ``description``, and ``version`` default to the installed package
+metadata (``pyproject.toml`` is the single source of truth). ``name`` and
+``description`` may be overridden via the environment; ``version`` may not — it
+always reports the deployed build and ignores any provided value (see the
+validator).
 """
 
 from __future__ import annotations
@@ -64,10 +57,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Identity. name/description: empty defaults backfilled from package
-    # metadata by the validator below; an env override (MF_SERVICE_NAME, etc.)
-    # wins. version: never env-overridable — always set from metadata by the
-    # validator, so it reports the build that is actually deployed.
+    # Identity: empty defaults are backfilled from package metadata by the
+    # validator below. See the class/module docstrings for the override rules.
     name: str = ""
     description: str = ""
     version: str = ""
@@ -78,14 +69,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _fill_identity_from_metadata(self) -> Settings:
-        """Resolve the identity fields from the package metadata.
+        """Backfill empty identity fields from the package metadata.
 
-        Runs inside pydantic's lifecycle (unlike overriding ``__init__``), so an
-        explicitly set ``name`` / ``description`` — e.g. ``MF_SERVICE_NAME`` — is
-        preserved and only the empty ones fall back to metadata. ``version`` is
-        the exception: it is always overwritten with the metadata value (any
-        provided value is discarded), so a stray ``MF_SERVICE_VERSION`` can
-        never make the service misreport which build is running.
+        An explicitly set ``name`` / ``description`` is preserved; only empty
+        ones fall back to metadata. ``version`` is always overwritten with the
+        metadata value, so a stray ``MF_SERVICE_VERSION`` can never make the
+        service misreport which build is running.
         """
         name, description, ver = _distribution_identity()
         self.name = self.name or name
@@ -96,13 +85,12 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Return the cached :class:`Settings` singleton.
+    """Return the cached :class:`Settings` singleton (read once per process).
 
-    Caching means configuration is read once per process. It is the FastAPI
-    dependency used by routes, so tests override it either by clearing the cache
-    (:func:`get_settings.cache_clear`) after setting environment variables, or
-    via ``app.dependency_overrides[get_settings]`` — which
-    :func:`~mf_service.app.create_app` wires up automatically when passed an
-    explicit ``settings`` instance.
+    It is the FastAPI dependency used by routes. Tests override it by clearing
+    the cache (:func:`get_settings.cache_clear`) after setting environment
+    variables, or via ``app.dependency_overrides[get_settings]`` — which
+    :func:`~mf_service.app.create_app` wires up when passed an explicit
+    ``settings`` instance.
     """
     return Settings()

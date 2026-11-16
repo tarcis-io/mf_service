@@ -24,10 +24,8 @@ def version(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> VersionResponse:
     """Report the service identity and the mf_engine version in use."""
-    # Imported inside the handler, not at module scope: mounting the router (and
-    # starting the app) then never pulls in the engine, and whatever the engine
-    # imports, until /version is actually hit. This mirrors the engine's own
-    # lazy-import discipline and keeps app startup independent of engine weight.
+    # Imported inside the handler, not at module scope, so mounting the router
+    # (and starting the app) does not pull in the engine until /version is hit.
     import mf_engine
 
     return VersionResponse(

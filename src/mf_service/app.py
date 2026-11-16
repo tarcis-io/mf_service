@@ -37,21 +37,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=resolved.version,
     )
 
-    # Keep the route-level dependency in sync with the factory argument: when an
-    # explicit settings is supplied, routes resolving Depends(get_settings) get
-    # that same instance rather than the cached process singleton.
+    # When an explicit settings is supplied, keep the route-level dependency in
+    # sync: routes resolving Depends(get_settings) get that same instance rather
+    # than the cached process singleton.
     if settings is not None:
         app.dependency_overrides[get_settings] = lambda: resolved
 
-    # Middleware / cross-cutting concerns go here, before the routers are
-    # mounted: CORS (app.add_middleware(CORSMiddleware, ...)), a request-id or
-    # timing middleware, and app.add_exception_handler(...) for mapping engine
-    # errors to HTTP responses. Driving any of these from `resolved` (Settings)
-    # keeps configuration flowing through the one boundary. None are needed
-    # while the API is just health/version.
-
-    # Mount the versioned API. Add a prefix (e.g. "/v1") here when a second API
-    # version is introduced; the route modules stay unchanged.
+    # Cross-cutting concerns (CORS, exception handlers, request-id/timing
+    # middleware) are registered here, before the routers are mounted.
     app.include_router(v1_router)
 
     return app

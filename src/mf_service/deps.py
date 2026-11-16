@@ -1,43 +1,18 @@
 """Shared FastAPI dependencies — the seam between the HTTP layer and the engine.
 
-Routes that need an :mod:`mf_engine` processor should obtain it through a
-provider declared here (via ``Depends``), rather than importing and constructing
-the engine inline. Centralising construction keeps the wiring in one place,
-lets tests swap a processor with ``app.dependency_overrides`` (exactly as
-:func:`mf_service.config.get_settings` is overridden today), and gives a single
-spot to decide a processor's lifetime — process-wide singleton vs. per-request.
+Routes that need an :mod:`mf_engine` processor obtain it through a provider
+declared here (via ``Depends``) instead of constructing the engine inline. This
+keeps construction in one place, lets tests swap a processor with
+``app.dependency_overrides`` (as :func:`mf_service.config.get_settings` is
+overridden today), and gives a single spot to decide a processor's lifetime.
 
-:mod:`mf_engine` is imported lazily inside the provider, not at module import,
-so importing this module (and starting the app) stays cheap and only pulls the
-engine in when an engine-backed route is actually exercised — mirroring the
-engine's own lazy-import discipline for its pandas-backed processors.
+The engine is imported lazily inside each provider, not at module import, so
+importing this module (and starting the app) stays cheap and only pulls in the
+engine when an engine-backed route is first exercised.
 
-Example — a future GNPS route
------------------------------
-    from typing import Annotated
-
-    from fastapi import APIRouter, Depends
-
-    from mf_service.deps import GNPSProcessorDep
-
-    router = APIRouter(tags=["gnps"])
-
-    @router.post("/gnps")
-    def run_gnps(processor: GNPSProcessorDep, body: GNPSRequest) -> GNPSResponse:
-        # Stays a plain `def`: the engine does CPU-bound pandas work, which
-        # FastAPI runs in its threadpool (see the convention note below). Making
-        # this `async def` would block the event loop.
-        result = processor.process(body.to_engine_input())
-        return GNPSResponse.from_engine_result(result)
-
-Route style convention
------------------------
-Engine-backed routes stay **synchronous** (``def``, not ``async def``). The
-engine's work is CPU-bound (pandas merges), and FastAPI offloads sync routes to
-a worker threadpool, keeping the event loop free. Use ``async def`` only for a
-route that genuinely ``await``\\s I/O (an async client, DB driver, etc.); never
-wrap blocking/CPU-bound work in ``async def``, where it would stall every other
-request.
+Engine-backed routes should stay synchronous (``def``, not ``async def``): the
+engine does CPU-bound pandas work, which FastAPI offloads to a worker
+threadpool. Reserve ``async def`` for routes that genuinely ``await`` I/O.
 """
 
 from __future__ import annotations
@@ -55,10 +30,9 @@ if TYPE_CHECKING:  # import for type checkers only; no engine import at runtime
 def get_gnps_processor() -> GNPSProcessor:
     """Return the process-wide :class:`~mf_engine.processors.gnps.GNPSProcessor`.
 
-    Cached so the processor is built once per process (it is stateless and
-    thread-safe to reuse). Imported lazily so neither importing this module nor
-    starting the app pulls in the engine's pandas dependency until a GNPS route
-    is first used. Tests can bypass it with
+    Cached so the processor is built once per process (it is stateless and safe
+    to reuse). Imported lazily so starting the app does not pull in the engine's
+    pandas dependency until a GNPS route is first used. Tests can bypass it with
     ``app.dependency_overrides[get_gnps_processor] = ...``.
     """
     from mf_engine.processors.gnps import GNPSProcessor

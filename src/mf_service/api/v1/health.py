@@ -17,5 +17,4 @@ router = APIRouter(tags=["health"])
 @router.get("/health", response_model=HealthResponse, summary="Liveness check")
 def health() -> HealthResponse:
     """Report that the service is live."""
-    # `status` defaults to "ok" on the model; no field to set here.
-    return HealthResponse()
+    return HealthResponse()  # status defaults to "ok" on the model

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 import mf_service
 from mf_service import create_app
+from mf_service.config import Settings
 
 
 def test_package_exposes_version():
@@ -50,3 +51,14 @@ def test_create_app_builds_independent_instances():
 def test_module_app_is_fastapi_instance():
     # `uvicorn mf_service:app` relies on this attribute existing.
     assert isinstance(mf_service.app, FastAPI)
+
+
+def test_openapi_metadata_comes_from_settings():
+    # create_app wires the OpenAPI title/description/version from the settings
+    # it resolves — the same instance the /version route reports — so the docs
+    # and the endpoint can't disagree.
+    settings = Settings(name="injected", description="injected desc")
+    app = create_app(settings)
+    assert app.title == "injected"
+    assert app.description == "injected desc"
+    assert app.version == settings.version
