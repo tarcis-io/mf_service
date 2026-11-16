@@ -18,9 +18,12 @@ threadpool. Reserve ``async def`` for routes that genuinely ``await`` I/O.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
-from fastapi import Depends
+from fastapi import Depends, Header
+
+from mf_service.config import Settings, get_settings
+from mf_service.repository import BatchRepository
 
 if TYPE_CHECKING:  # import for type checkers only; no engine import at runtime
     from mf_engine.processors.gnps import GNPSProcessor
@@ -43,3 +46,55 @@ def get_gnps_processor() -> GNPSProcessor:
 # Annotated alias so routes can write `processor: GNPSProcessorDep` instead of
 # repeating the Depends wiring. New engine providers follow the same shape.
 GNPSProcessorDep = Annotated["GNPSProcessor", Depends(get_gnps_processor)]
+
+
+def get_user_id(x_user_id: Annotated[str, Header()]) -> str:
+    """Return the calling user's id from the required ``X-User-Id`` header.
+
+    This service is called by another service on GCP, which identifies the end
+    user via this header; FastAPI returns 422 automatically when it is absent.
+    Scoping every batch operation by this value is what keeps one user's batches
+    invisible to another.
+    """
+    return x_user_id
+
+
+# Route alias: `user_id: UserIdDep`.
+UserIdDep = Annotated[str, Depends(get_user_id)]
+
+
+@lru_cache
+def _get_firestore_client(project: str | None) -> Any:
+    """Build (once per process) the Firestore client.
+
+    Imported lazily so neither importing this module nor starting the app pulls
+    in ``google-cloud-firestore`` until a batch route is first used. ``project``
+    is passed (rather than read from settings here) so the cache key reflects
+    it; ``None`` lets the client auto-detect the project from GCP credentials.
+    """
+    from google.cloud import firestore
+
+    return firestore.Client(project=project) if project else firestore.Client()
+
+
+def get_batch_repository(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> BatchRepository:
+    """Return the :class:`~mf_service.repository.BatchRepository`.
+
+    Builds the Firestore-backed repository from settings. Tests override this
+    with ``app.dependency_overrides[get_batch_repository]`` to supply the
+    in-memory implementation, so no live Firestore is needed to exercise routes.
+    """
+    from mf_service.firestore_repository import FirestoreBatchRepository
+
+    client = _get_firestore_client(settings.firestore_project)
+    return FirestoreBatchRepository(
+        client,
+        batches_collection=settings.batches_collection,
+        names_collection=settings.batch_names_collection,
+    )
+
+
+# Route alias: `repo: BatchRepositoryDep`.
+BatchRepositoryDep = Annotated[BatchRepository, Depends(get_batch_repository)]

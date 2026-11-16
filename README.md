@@ -69,6 +69,47 @@ Note: in an uninstalled source tree the metadata is unavailable, so `version`
 and `engine_version` each fall back to `"0.0.0"`; run from an installed package
 (`pip install -e .`) to see the real versions.
 
+### Batches
+
+CRUD over a **batch** — a unit of processing work owned by a user. Every batch
+route requires an `X-User-Id` request header (this service is called by another
+service, which identifies the end user that way); a request without it gets
+`422`. All operations are scoped to that user: a batch id belonging to another
+user reads as `404`.
+
+A batch has a server-assigned `id` (UUID) and `created` timestamp, a `name`, a
+`status` (`created` → `processing` → `processed` / `error`), and an
+`error_message` (set only when `status` is `error`). New batches always start as
+`created`; the status advances later as the engine processes them, not through
+this API.
+
+| Method & path        | Body        | Description                                   |
+| -------------------- | ----------- | --------------------------------------------- |
+| `POST /batches`      | `{ "name" }`| Create a batch. `409` if the name is taken.   |
+| `GET /batches`       | —           | List the caller's batches, newest first.      |
+| `GET /batches/{id}`  | —           | Fetch one batch. `404` if absent.             |
+| `PATCH /batches/{id}`| `{ "name" }`| Rename. `404` if absent, `409` on dup name.   |
+| `DELETE /batches/{id}`| —          | Delete. `404` if absent.                      |
+
+**Name uniqueness.** A name must be unique *per user* (two different users may
+use the same name). Only the name is mutable — all other fields are
+server-managed. Because Firestore has no unique constraints, uniqueness is
+enforced with a transaction that reserves the name via a guard document, so two
+concurrent creates of the same name cannot both succeed (see
+`mf_service.firestore_repository`).
+
+```json
+// POST /batches  (header: X-User-Id: user-123)  body: { "name": "Spring run" }
+{
+  "id": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  "user_id": "user-123",
+  "name": "Spring run",
+  "created": "2026-01-15T09:30:00Z",
+  "status": "created",
+  "error_message": null
+}
+```
+
 ## Configuration
 
 Configuration is centralised in `mf_service.config.Settings` (a
@@ -78,14 +119,22 @@ directly. See `.env.example` for the available variables.
 
 | Variable                 | Default           | Description                         |
 | ------------------------ | ----------------- | ----------------------------------- |
-| `MF_SERVICE_HOST`        | `0.0.0.0`         | Bind address for the server.        |
-| `MF_SERVICE_PORT`        | `8000`            | Bind port for the server.           |
-| `MF_SERVICE_NAME`        | package name      | Overrides the reported name.        |
-| `MF_SERVICE_DESCRIPTION` | package summary   | Overrides the reported description. |
+| `MF_SERVICE_HOST`                  | `0.0.0.0`     | Bind address for the server.                      |
+| `MF_SERVICE_PORT`                  | `8000`        | Bind port for the server.                         |
+| `MF_SERVICE_NAME`                  | package name  | Overrides the reported name.                      |
+| `MF_SERVICE_DESCRIPTION`           | package summary | Overrides the reported description.             |
+| `MF_SERVICE_FIRESTORE_PROJECT`     | auto-detected | GCP project for Firestore; blank = auto-detect.   |
+| `MF_SERVICE_BATCHES_COLLECTION`    | `batches`     | Firestore collection for batch documents.         |
+| `MF_SERVICE_BATCH_NAMES_COLLECTION`| `batch_names` | Firestore collection for the name-uniqueness guard.|
 
 The reported `version` is **not** configurable: it is always read from the
 package metadata so it reflects the build that is actually deployed. Setting
 `MF_SERVICE_VERSION` has no effect.
+
+Firestore uses Application Default Credentials: on Cloud Run the project and
+credentials are auto-detected, so `MF_SERVICE_FIRESTORE_PROJECT` is usually left
+unset. Locally, point `GOOGLE_APPLICATION_CREDENTIALS` at a service-account key
+(or run the Firestore emulator and set `FIRESTORE_EMULATOR_HOST`).
 
 ## Version
 
@@ -119,34 +168,41 @@ make check        # lint + type-check + tests
 
 ```
 mf_service/
-├── pyproject.toml              # repository root
+├── pyproject.toml                   # repository root
 ├── README.md
 ├── LICENSE
 ├── Makefile
 ├── .env.example
 ├── src/
-│   └── mf_service/             # the importable package
-│       ├── __init__.py         # exposes `app`, `create_app`, `__version__`
-│       ├── __main__.py         # console entry point (uvicorn)
-│       ├── app.py              # the FastAPI application factory
-│       ├── config.py           # Settings (pydantic-settings)
-│       ├── deps.py             # engine-integration seam (Depends providers)
-│       ├── schemas.py          # response models (API contracts)
-│       ├── py.typed            # PEP 561 typing marker
+│   └── mf_service/                  # the importable package
+│       ├── __init__.py              # exposes `app`, `create_app`, `__version__`
+│       ├── __main__.py              # console entry point (uvicorn)
+│       ├── app.py                   # the FastAPI application factory
+│       ├── config.py                # Settings (pydantic-settings)
+│       ├── domain.py                # storage-agnostic Batch entity + status enum
+│       ├── repository.py            # BatchRepository contract + in-memory impl
+│       ├── firestore_repository.py  # Firestore-backed BatchRepository
+│       ├── deps.py                  # Depends seam (engine, repository, X-User-Id)
+│       ├── schemas.py               # request/response models (API contracts)
+│       ├── py.typed                 # PEP 561 typing marker
 │       └── api/
-│           ├── __init__.py     # the API package (grouped by version)
+│           ├── __init__.py          # the API package (grouped by version)
 │           └── v1/
-│               ├── __init__.py # aggregates the v1 routes into one router
-│               ├── health.py   # GET /health
-│               └── version.py  # GET /version
+│               ├── __init__.py      # aggregates the v1 routes into one router
+│               ├── health.py        # GET /health
+│               ├── version.py       # GET /version
+│               └── batches.py       # CRUD /batches
 └── tests/
-    ├── conftest.py             # shared fixtures (TestClient)
-    ├── test_package.py         # package surface + app factory
-    ├── test_main.py            # console entry point (uvicorn wiring)
-    ├── test_config.py          # Settings + env overrides + cache
-    ├── test_deps.py            # engine-integration dependency seam
-    ├── test_health.py          # /health endpoint
-    └── test_version.py         # /version endpoint
+    ├── conftest.py                  # shared fixtures (TestClient, in-memory repo)
+    ├── test_package.py              # package surface + app factory
+    ├── test_main.py                 # console entry point (uvicorn wiring)
+    ├── test_config.py               # Settings + env overrides + cache
+    ├── test_deps.py                 # engine + repository dependency seams
+    ├── test_health.py               # /health endpoint
+    ├── test_version.py              # /version endpoint
+    ├── test_repository.py           # in-memory BatchRepository
+    ├── test_firestore_repository.py # Firestore repo (fake client)
+    └── test_batches.py              # /batches CRUD endpoints
 ```
 
 This uses the **src layout** so tests always run against the installed package,

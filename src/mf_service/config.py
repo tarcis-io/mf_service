@@ -70,6 +70,13 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Firestore. project is optional: the client auto-detects it from the
+    # ambient GCP credentials/metadata when left blank (the normal case on
+    # Cloud Run). The two collection names are overridable for multi-env setups.
+    firestore_project: str | None = None
+    batches_collection: str = "batches"
+    batch_names_collection: str = "batch_names"
+
     @model_validator(mode="after")
     def _fill_identity_from_metadata(self) -> Settings:
         """Backfill empty identity fields from the package metadata.

@@ -13,7 +13,12 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from mf_service.api.v1 import router as v1_router
+from mf_service.api.v1.batches import (
+    batch_not_found_handler,
+    duplicate_name_handler,
+)
 from mf_service.config import Settings, get_settings
+from mf_service.repository import BatchNotFoundError, DuplicateBatchNameError
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -43,8 +48,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings is not None:
         app.dependency_overrides[get_settings] = lambda: resolved
 
-    # Cross-cutting concerns (CORS, exception handlers, request-id/timing
-    # middleware) are registered here, before the routers are mounted.
+    # Cross-cutting concerns are registered here, before the routers are
+    # mounted. Mapping the repository's domain errors to HTTP status codes in
+    # one place keeps the routes free of try/except: a raised
+    # DuplicateBatchNameError becomes 409 and a BatchNotFoundError becomes 404,
+    # wherever they originate. (CORS / request-id / timing middleware would be
+    # added here too.)
+    app.add_exception_handler(BatchNotFoundError, batch_not_found_handler)
+    app.add_exception_handler(DuplicateBatchNameError, duplicate_name_handler)
+
     app.include_router(v1_router)
 
     return app

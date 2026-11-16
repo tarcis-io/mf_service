@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from mf_service.api.v1 import health, version
+from mf_service.api.v1 import batches, health, version
 
 router = APIRouter()
 router.include_router(health.router)
 router.include_router(version.router)
+router.include_router(batches.router)
 
 __all__ = ["router"]
