@@ -25,8 +25,9 @@ engine-integration seam's lazy-import discipline.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from mf_service.domain import Batch, BatchStatus
 from mf_service.repository import BatchNotFoundError, DuplicateBatchNameError
@@ -37,6 +38,10 @@ if TYPE_CHECKING:  # type-checker only; no runtime Firestore import
         CollectionReference,
         Transaction,
     )
+
+# Return type of a transactional body — preserved through the decorator so the
+# call site gets the body's type (Batch / None) rather than Any.
+_T = TypeVar("_T")
 
 
 def _name_key(user_id: str, name: str) -> str:
@@ -63,12 +68,20 @@ def _to_document(batch: Batch) -> dict[str, Any]:
     }
 
 
-def _from_document(data: dict[str, Any]) -> Batch:
+def _from_document(data: dict[str, Any] | None) -> Batch:
     """Rebuild a :class:`Batch` from a Firestore document dict.
+
+    ``data`` is typed optional because ``snapshot.to_dict()`` is — but every
+    call site has already confirmed the document exists (via ``.exists`` or by
+    streaming a query that only yields present docs), so ``None`` here means a
+    document vanished mid-operation; we fail loudly rather than return a half
+    batch.
 
     The ``created`` timestamp comes back from Firestore as a timezone-aware
     datetime; it is normalised to UTC so the API always emits consistent values.
     """
+    if data is None:  # pragma: no cover - guarded by .exists at every call site
+        raise ValueError("document has no data")
     created: datetime = data["created"]
     if created.tzinfo is None:  # defensive: treat a naive value as UTC
         created = created.replace(tzinfo=timezone.utc)
@@ -105,18 +118,22 @@ class FirestoreBatchRepository:
         return self._client.collection(self._names_name)
 
     @staticmethod
-    def _transactional(fn: Any) -> Any:
+    def _transactional(
+        fn: Callable[[Transaction], _T],
+    ) -> Callable[[Transaction], _T]:
         """Wrap ``fn`` with the Firestore transactional decorator.
 
         ``firestore.transactional`` is a module-level decorator (not a client
         method); it is imported lazily here so the module stays free of a
         runtime Firestore import until a transactional operation actually runs.
         The wrapped function takes the transaction as its first argument and is
-        invoked by passing ``client.transaction()``.
+        invoked by passing ``client.transaction()``. The ``_T`` return type is
+        carried through the untyped decorator (via ``cast``) so each call site
+        gets the body's own type (``Batch`` / ``None``), not ``Any``.
         """
         from google.cloud import firestore
 
-        return firestore.transactional(fn)
+        return cast("Callable[[Transaction], _T]", firestore.transactional(fn))
 
     def create(self, batch: Batch) -> Batch:
         guard_ref = self._names.document(_name_key(batch.user_id, batch.name))

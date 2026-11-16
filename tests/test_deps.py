@@ -8,7 +8,6 @@ import types
 import pytest
 from mf_engine.processors.gnps import GNPSProcessor
 
-from mf_service import deps
 from mf_service.config import Settings
 from mf_service.deps import (
     _get_firestore_client,

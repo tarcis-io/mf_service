@@ -10,6 +10,7 @@ wire format has one definition.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -50,12 +51,15 @@ class VersionResponse(BaseModel):
     )
 
 
-def _batch_name_field() -> str:
+def _batch_name_field() -> Any:
     """A fresh batch-name field: required, trimmed, 1–255 chars.
 
     A factory (not a shared ``Field`` instance) so create and update each get
     their own ``FieldInfo`` — reusing one instance across models is a Pydantic
-    footgun — while the constraint stays defined in exactly one place.
+    footgun — while the constraint stays defined in exactly one place. Returns
+    ``Any`` (not ``str``): ``Field()`` yields a ``FieldInfo`` that stands in for
+    the field's default, and the annotated ``name: str`` on each model is what
+    types the attribute.
     """
     return Field(
         min_length=1,

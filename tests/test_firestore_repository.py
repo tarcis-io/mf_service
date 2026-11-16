@@ -26,7 +26,6 @@ from mf_service.firestore_repository import (
 )
 from mf_service.repository import BatchNotFoundError, DuplicateBatchNameError
 
-
 # --------------------------------------------------------------------------
 # A tiny in-process fake of the Firestore client surface used by the repo.
 # --------------------------------------------------------------------------
@@ -45,7 +44,7 @@ class _FakeSnapshot:
 
 
 class _FakeDocument:
-    def __init__(self, collection: "_FakeCollection", doc_id: str) -> None:
+    def __init__(self, collection: _FakeCollection, doc_id: str) -> None:
         self._collection = collection
         self.id = doc_id
 
@@ -79,7 +78,7 @@ class _FakeCollection:
 class _FakeTransaction:
     """Records writes and applies them when the transactional fn returns."""
 
-    def __init__(self, client: "_FakeClient") -> None:
+    def __init__(self, client: _FakeClient) -> None:
         self._client = client
 
     def set(self, ref: _FakeDocument, data: dict) -> None:
