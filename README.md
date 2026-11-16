@@ -119,7 +119,7 @@ make check        # lint + type-check + tests
 
 ```
 mf_service/
-├── pyproject.toml
+├── pyproject.toml              # repository root
 ├── README.md
 ├── LICENSE
 ├── Makefile
@@ -142,7 +142,9 @@ mf_service/
 └── tests/
     ├── conftest.py             # shared fixtures (TestClient)
     ├── test_package.py         # package surface + app factory
+    ├── test_main.py            # console entry point (uvicorn wiring)
     ├── test_config.py          # Settings + env overrides + cache
+    ├── test_deps.py            # engine-integration dependency seam
     ├── test_health.py          # /health endpoint
     └── test_version.py         # /version endpoint
 ```

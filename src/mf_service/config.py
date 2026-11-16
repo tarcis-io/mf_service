@@ -37,7 +37,10 @@ def _distribution_identity() -> tuple[str, str, str]:
         meta = metadata(_DISTRIBUTION)
     except PackageNotFoundError:  # pragma: no cover - source tree, not installed
         return _DISTRIBUTION, "", _VERSION_FALLBACK
-    return meta["Name"], meta.get("Summary", ""), version(_DISTRIBUTION)
+    # PackageMetadata supports __getitem__/__contains__ but not .get(); a missing
+    # key yields None, so coerce the optional Summary to a plain string.
+    summary = meta["Summary"] if "Summary" in meta else ""
+    return meta["Name"], summary or "", version(_DISTRIBUTION)
 
 
 class Settings(BaseSettings):

@@ -31,7 +31,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
-    "mf_engine @ git+https://github.com/tarcis-io/mf_engine.git@4b971a308216d0b61e7b5cbcec0331e93cb1e25a",
+    "mf_engine @ git+https://github.com/tarcis-io/mf_engine.git@6fe8fd6e5b966dc65104dd0daf4f903b84632bbc",
 ]
 
 [project.optional-dependencies]
@@ -61,9 +61,10 @@ mf_service = ["py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Coverage runs by default (pytest-cov is in the dev extra). term-missing lists
-# the uncovered lines; the gate keeps new untested code from slipping in. Lines
-# that can't be exercised in-process are marked `# pragma: no cover`.
-addopts = "--cov=mf_service --cov-report=term-missing --cov-fail-under=90"
+# the uncovered lines; the gate keeps new untested code from slipping in. The
+# suite covers 100% of the package; lines that genuinely can't be exercised
+# in-process (e.g. the `__main__` guard) are marked `# pragma: no cover`.
+addopts = "--cov=mf_service --cov-report=term-missing --cov-fail-under=100"
 
 [tool.coverage.run]
 branch = true
