@@ -56,7 +56,7 @@ async def create_batch(
     ``mzmine_metadata.csv``, ``gnps_feature_table_reformated.csv``,
     ``gnps_merged_results.tsv``). A missing field is a ``422``.
 
-    The id, creation time, and initial ``created`` status are assigned by the
+    The id, creation time, and initial ``creating`` status are assigned by the
     server. Fails with ``409`` if the user already has a batch with this name.
 
     The files are read here (while the request is open) and uploaded to object

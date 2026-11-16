@@ -143,6 +143,16 @@ def test_update_renames(batch_client: TestClient):
     assert resp.json()["name"] == "after"
 
 
+def test_update_rejects_blank_name(batch_client: TestClient):
+    # BatchUpdateRequest strips whitespace then enforces min_length, so an
+    # all-blank rename trims to empty and fails validation — mirroring create.
+    created = _create(batch_client, "before").json()
+    resp = batch_client.patch(
+        f"/batches/{created['id']}", json={"name": "   "}, headers=USER
+    )
+    assert resp.status_code == 422
+
+
 def test_update_duplicate_name_returns_409(batch_client: TestClient):
     _create(batch_client, "taken")
     other = _create(batch_client, "free").json()
