@@ -1,0 +1,103 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mf_service"
+version = "0.1.0"
+description = "MassFlow service: a FastAPI service exposing the MassFlow engine over HTTP."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "MassFlow" }]
+keywords = ["mzmine", "gnps", "metabolomics", "fastapi", "service"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+    "Intended Audience :: Science/Research",
+    "Framework :: FastAPI",
+]
+# Runtime dependencies. The service is a thin HTTP layer over mf_engine (the
+# core engine), served by FastAPI. mf_engine is pinned to a specific main
+# commit so builds stay reproducible; bump the pin to adopt a newer engine.
+# Only the dependencies the current surface needs are listed; data-store and
+# other libraries are added alongside the endpoints that introduce them.
+dependencies = [
+    "fastapi>=0.165.0",
+    "uvicorn[standard]>=0.54.0",
+    "pydantic>=2.14.4",
+    "pydantic-settings>=2.16.3",
+    "python-multipart>=0.0.34",
+    "google-cloud-firestore>=2.34.1",
+    "google-cloud-storage>=3.17.2",
+    "mf_engine @ git+https://github.com/tarcis-io/mf_engine.git@6fe8fd6e5b966dc65104dd0daf4f903b84632bbc",
+]
+
+[project.optional-dependencies]
+# Developer tooling (mirrors mf_engine's dev extra, plus an HTTP test client).
+dev = [
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "httpx>=0.29.0",
+    "ruff>=0.17.6",
+    "mypy>=2.4.1",
+]
+
+[project.scripts]
+# Console entry point: `mf-service` launches the ASGI app with uvicorn.
+mf-service = "mf_service.__main__:main"
+
+[project.urls]
+Homepage = "https://massflowai.com"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Ship the typing marker so downstream type checkers see the package as typed.
+mf_service = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Coverage runs by default; the 100% gate keeps untested code out of CI.
+# Lines that can't be exercised in-process are marked `# pragma: no cover`.
+addopts = "--cov=mf_service --cov-report=term-missing --cov-fail-under=100"
+
+[tool.coverage.run]
+branch = true
+source = ["mf_service"]
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+# pycodestyle (E), pyflakes (F), isort (I), pyupgrade (UP), bugbear (B).
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["mf_service"]
+mypy_path = "src"
+# Strong-but-pragmatic checks rather than full `strict`, matching mf_engine.
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_optional = true
+
+# google-cloud-storage ships no type stubs or py.typed marker (unlike
+# google-cloud-firestore, which is typed), so mypy can't analyse it. Ignore the
+# missing import for that one module rather than globally.
+[[tool.mypy.overrides]]
+module = ["google.cloud.storage"]
+ignore_missing_imports = true
